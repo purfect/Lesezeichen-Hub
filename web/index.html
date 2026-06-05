@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lesezeichen Hub</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="bg-shape bg-shape-1"></div>
+  <div class="bg-shape bg-shape-2"></div>
+
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Persoenlicher Browser Hub</p>
+      <h1>Lesezeichen</h1>
+      <p id="search-info" class="search-info">Suche in Titeln, URLs, Notizen und Gruppen.</p>
+    </div>
+    <div class="topbar-actions">
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Suche nach Titel, URL oder Notiz..." />
+        <button id="search-clear" class="search-clear hidden" type="button" aria-label="Suche leeren">X</button>
+      </div>
+      <a class="gear-link" href="/static/overview.html" aria-label="Zur Uebersicht">
+        &#9881;
+      </a>
+    </div>
+  </header>
+
+  <section id="favorites-segment" class="favorites-segment hidden" aria-label="Favoriten Schnellwahl">
+    <div class="favorites-head">
+      <h2>Schnellwahl</h2>
+      <p>Direktzugriff auf deine Favoriten</p>
+    </div>
+    <nav id="favorites-quickbar" class="favorites-quickbar"></nav>
+  </section>
+
+  <main class="layout">
+    <section class="panel panel-create">
+      <h2>Hinzufuegen</h2>
+
+      <div class="add-block">
+        <div class="add-bookmark-head">
+          <h3>Neue Gruppe</h3>
+          <button id="toggle-group-form" class="plus-button" type="button" aria-expanded="false" title="Gruppe hinzufuegen">+</button>
+        </div>
+        <form id="group-form" class="hidden">
+          <label>
+            Name
+            <input required name="name" maxlength="100" placeholder="z.B. Arbeit" />
+          </label>
+          <label>
+            Beschreibung
+            <textarea name="description" rows="2" maxlength="250" placeholder="Worum geht es in dieser Gruppe?"></textarea>
+          </label>
+          <label>
+            Reihenfolge
+            <input name="sort_order" type="number" value="0" />
+          </label>
+          <button type="submit">Gruppe anlegen</button>
+        </form>
+      </div>
+
+      <div class="add-block">
+        <div class="add-bookmark-head">
+          <h3>Neues Lesezeichen</h3>
+          <button id="toggle-bookmark-form" class="plus-button" type="button" aria-expanded="false" title="Lesezeichen hinzufuegen">+</button>
+        </div>
+        <form id="bookmark-form-global" class="bookmark-form-global hidden">
+          <label>
+            Gruppe
+            <select id="bookmark-group" name="group_id" required></select>
+          </label>
+          <label>
+            Titel
+            <input name="title" required maxlength="120" placeholder="Titel" />
+          </label>
+          <label>
+            URL
+            <input name="url" required placeholder="https://..." />
+          </label>
+          <label>
+            Notiz
+            <textarea name="notes" rows="2" maxlength="500" placeholder="Notiz (optional)"></textarea>
+          </label>
+          <label>
+            Erinnerung am
+            <input name="remind_at" type="date" />
+          </label>
+          <label>
+            Tags
+            <input name="tags" placeholder="z.B. arbeit, monitoring" />
+          </label>
+          <label class="inline-check">
+            <input name="favorite" type="checkbox" /> Favorit
+          </label>
+          <label class="inline-check">
+            <input name="pinned" type="checkbox" /> Angepinnt
+          </label>
+          <button type="submit">Lesezeichen speichern</button>
+        </form>
+      </div>
+
+      <div id="reminder-alerts-block" class="add-block reminder-alerts hidden" aria-live="polite">
+        <h3>Wiedervorlage bald/faellig</h3>
+        <p class="search-info">Alle Lesezeichen mit Datum bis in 3 Tagen oder bereits ueberschritten.</p>
+        <ul id="reminder-alerts-list" class="reminder-alerts-list"></ul>
+      </div>
+    </section>
+
+    <section class="panel panel-list">
+      <div class="panel-head">
+        <h2>Gruppen</h2>
+        <div class="panel-actions">
+          <button id="export-json" class="ghost" type="button">Export JSON</button>
+          <button id="export-csv" class="ghost" type="button">Export CSV</button>
+          <button id="export-html" class="ghost" type="button">Export HTML</button>
+          <button id="import-data" class="ghost" type="button">Import</button>
+          <button id="reload" class="ghost" type="button">Neu laden</button>
+          <input id="import-data-file" type="file" accept="application/json,.json,text/csv,.csv,text/html,.html,.htm" class="hidden" />
+        </div>
+      </div>
+      <div id="groups" class="group-grid"></div>
+    </section>
+  </main>
+
+  <template id="group-template">
+    <article class="group-card" draggable="true">
+      <div class="group-head">
+        <div>
+          <h3 class="group-name"></h3>
+          <p class="group-description"></p>
+        </div>
+        <div class="row-actions">
+          <button class="ghost collapse-group" type="button" aria-expanded="true">Zuklappen</button>
+          <button class="ghost share-group icon-only" type="button" title="Gruppe exportieren" aria-label="Gruppe exportieren">↗</button>
+          <button class="ghost edit-group" type="button">Bearbeiten</button>
+          <button class="danger delete-group" type="button" aria-label="Gruppe loeschen">X</button>
+        </div>
+      </div>
+
+      <div class="group-content">
+        <ul class="bookmark-list"></ul>
+      </div>
+    </article>
+  </template>
+
+  <template id="bookmark-template">
+    <li class="bookmark-item" draggable="true">
+      <div>
+        <a class="bookmark-link" target="_blank" rel="noreferrer"></a>
+        <p class="bookmark-url"></p>
+        <p class="bookmark-notes"></p>
+        <p class="bookmark-reminder hidden"></p>
+        <div class="bookmark-tags"></div>
+      </div>
+      <div class="row-actions">
+        <button class="ghost toggle-pin" type="button" aria-label="Pin umschalten">Pin</button>
+        <button class="ghost toggle-favorite" type="button" aria-label="Favorit umschalten">Fav</button>
+        <button class="ghost edit-bookmark" type="button">Bearbeiten</button>
+        <button class="danger delete-bookmark" type="button" aria-label="Lesezeichen loeschen">X</button>
+      </div>
+    </li>
+  </template>
+
+  <dialog id="bookmark-edit-dialog" class="edit-dialog">
+    <form id="bookmark-edit-form" method="dialog">
+      <h3>Lesezeichen bearbeiten</h3>
+      <input type="hidden" name="id" />
+      <label>
+        Gruppe
+        <select id="bookmark-edit-group" name="group_id" required></select>
+      </label>
+      <label>
+        Titel
+        <input name="title" required maxlength="120" placeholder="Titel" />
+      </label>
+      <label>
+        URL
+        <input name="url" required placeholder="https://..." />
+      </label>
+      <label>
+        Notiz
+        <textarea name="notes" rows="3" maxlength="500" placeholder="Notiz (optional)"></textarea>
+      </label>
+      <label>
+        Erinnerung am
+        <input name="remind_at" type="date" />
+      </label>
+      <label>
+        Tags
+        <input name="tags" placeholder="z.B. arbeit, monitoring" />
+      </label>
+      <label class="inline-check">
+        <input name="favorite" type="checkbox" /> Favorit
+      </label>
+      <label class="inline-check">
+        <input name="pinned" type="checkbox" /> Angepinnt
+      </label>
+      <div class="dialog-actions">
+        <button type="button" id="bookmark-edit-cancel" class="ghost">Abbrechen</button>
+        <button type="submit">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <p id="status" class="status"></p>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

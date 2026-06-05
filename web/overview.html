@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lesezeichen Uebersicht</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="bg-shape bg-shape-1"></div>
+  <div class="bg-shape bg-shape-2"></div>
+
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Persoenlicher Browser Hub</p>
+      <h1>Uebersicht</h1>
+      <p class="search-info">Kennzahlen zu deinen Gruppen und Lesezeichen.</p>
+    </div>
+    <div class="topbar-actions">
+      <a class="gear-link" href="/" aria-label="Zur Startseite">Zurueck</a>
+    </div>
+  </header>
+
+  <main class="overview-main">
+    <section class="panel">
+      <h2>Gesamtzahlen</h2>
+      <div id="stats-grid" class="stats-grid"></div>
+    </section>
+
+    <section class="overview-details">
+      <article class="detail-card">
+        <h2>Groesste Gruppen</h2>
+        <ol id="largest-groups" class="simple-list"></ol>
+      </article>
+
+      <article class="detail-card">
+        <h2>Top Tags</h2>
+        <ol id="top-tags" class="simple-list"></ol>
+      </article>
+
+      <article class="detail-card">
+        <h2>Wiedervorlagen</h2>
+        <ul id="reminder-summary" class="simple-list"></ul>
+      </article>
+    </section>
+  </main>
+
+  <p id="status" class="status"></p>
+  <script src="/static/overview.js" defer></script>
+</body>
+</html>
