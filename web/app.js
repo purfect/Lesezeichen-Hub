@@ -1,6 +1,7 @@
 const state = {
   groups: [],
   search: "",
+  includeArchivedInSearch: false,
   collapsedGroupIds: loadCollapsedGroupIds(),
   drag: {
     groupId: null,
@@ -36,6 +37,7 @@ const els = {
   reload: document.getElementById("reload"),
   search: document.getElementById("search"),
   searchClear: document.getElementById("search-clear"),
+  searchArchive: document.getElementById("search-archive"),
 };
 
 init();
@@ -56,6 +58,10 @@ function init() {
   els.search.addEventListener("input", (e) => {
     state.search = e.target.value.trim().toLowerCase();
     updateSearchClearButton();
+    render();
+  });
+  els.searchArchive.addEventListener("change", (e) => {
+    state.includeArchivedInSearch = Boolean(e.target.checked);
     render();
   });
   els.searchClear.addEventListener("click", clearSearch);
@@ -212,6 +218,7 @@ function parseCSVImport(rawCSV) {
     tags: header.indexOf("tags"),
     favorite: header.indexOf("favorite"),
     pinned: header.indexOf("pinned"),
+    archived: header.indexOf("archived"),
     sortOrder: header.indexOf("sort_order"),
     remindAt: header.indexOf("remind_at"),
   };
@@ -249,6 +256,7 @@ function parseCSVImport(rawCSV) {
       tags: parseTagsInput(getCSVCell(row, idx.tags)),
       favorite: parseBoolish(getCSVCell(row, idx.favorite)),
       pinned: parseBoolish(getCSVCell(row, idx.pinned)),
+      archived: parseBoolish(getCSVCell(row, idx.archived)),
       sort_order: parseNumberish(getCSVCell(row, idx.sortOrder), groupsMap.get(groupKey).bookmarks.length),
       remind_at: getCSVCell(row, idx.remindAt),
     });
@@ -283,6 +291,7 @@ function parseHTMLImport(rawHTML) {
           tags: [],
           favorite: false,
           pinned: false,
+          archived: false,
           sort_order: bookmarkIndex,
           remind_at: "",
         };
@@ -428,12 +437,15 @@ function render() {
   renderReminderAlerts();
   els.groups.innerHTML = "";
   let matchCount = 0;
+  let archivedMatchCount = 0;
   const filteredGroups = state.groups
     .map((group) => {
       const allBookmarks = group.bookmarks || [];
       const groupMatches = matchesSearch(group.name, group.description);
-      const bookmarks = groupMatches ? allBookmarks : filterBookmarks(allBookmarks);
+      const visibleBookmarks = allBookmarks.filter(shouldShowBookmark);
+      const bookmarks = groupMatches ? visibleBookmarks : filterBookmarks(visibleBookmarks);
       matchCount += bookmarks.length;
+      archivedMatchCount += bookmarks.filter((bookmark) => Boolean(bookmark.archived)).length;
 
       return {
         ...group,
@@ -442,7 +454,7 @@ function render() {
     })
     .filter((group) => group.bookmarks.length > 0 || !state.search);
 
-  updateSearchInfo(filteredGroups.length, matchCount);
+  updateSearchInfo(filteredGroups.length, matchCount, archivedMatchCount);
 
   if (filteredGroups.length === 0) {
     els.groups.innerHTML = `<p>Keine Treffer. Versuche eine andere Suche.</p>`;
@@ -528,12 +540,20 @@ function render() {
 
       const pinBtn = item.querySelector(".toggle-pin");
       const favBtn = item.querySelector(".toggle-favorite");
+      const archiveBtn = item.querySelector(".toggle-archive");
       pinBtn.classList.toggle("active", Boolean(bookmark.pinned));
       favBtn.classList.toggle("active", Boolean(bookmark.favorite));
-      pinBtn.textContent = bookmark.pinned ? "Unpin" : "Pin";
-      favBtn.textContent = bookmark.favorite ? "Unfav" : "Fav";
+      archiveBtn.classList.toggle("active", Boolean(bookmark.archived));
+      pinBtn.title = bookmark.pinned ? "Pin loesen" : "Anpinnen";
+      pinBtn.setAttribute("aria-label", bookmark.pinned ? "Pin loesen" : "Anpinnen");
+      favBtn.title = bookmark.favorite ? "Favorit entfernen" : "Favorit setzen";
+      favBtn.setAttribute("aria-label", bookmark.favorite ? "Favorit entfernen" : "Favorit setzen");
+      archiveBtn.title = bookmark.archived ? "Aus Archiv holen" : "Archivieren";
+      archiveBtn.setAttribute("aria-label", bookmark.archived ? "Aus Archiv holen" : "Archivieren");
       pinBtn.addEventListener("click", () => onToggleBookmarkPin(bookmark));
       favBtn.addEventListener("click", () => onToggleBookmarkFavorite(bookmark));
+      archiveBtn.addEventListener("click", () => onToggleBookmarkArchived(bookmark));
+      item.classList.toggle("is-archived", Boolean(bookmark.archived));
 
       item.querySelector(".edit-bookmark").addEventListener("click", () => onEditBookmark(bookmark));
       item.querySelector(".delete-bookmark").addEventListener("click", () => onDeleteBookmark(bookmark));
@@ -556,7 +576,7 @@ function renderFavoritesQuickbar() {
       ...bookmark,
       groupName: group.name,
     })))
-    .filter((bookmark) => Boolean(bookmark.favorite))
+    .filter((bookmark) => Boolean(bookmark.favorite) && !bookmark.archived)
     .sort((a, b) => {
       if (Number(b.pinned) !== Number(a.pinned)) {
         return Number(b.pinned) - Number(a.pinned);
@@ -595,7 +615,7 @@ function renderReminderAlerts() {
       ...bookmark,
       groupName: group.name,
     })))
-    .filter((bookmark) => isBookmarkAlert(bookmark))
+    .filter((bookmark) => isBookmarkAlert(bookmark) && !bookmark.archived)
     .sort((a, b) => {
       const aDate = parseBookmarkDate(a.remind_at)?.getTime() ?? Number.MAX_SAFE_INTEGER;
       const bDate = parseBookmarkDate(b.remind_at)?.getTime() ?? Number.MAX_SAFE_INTEGER;
@@ -650,6 +670,10 @@ async function onToggleBookmarkPin(bookmark) {
 
 async function onToggleBookmarkFavorite(bookmark) {
   await saveBookmark(bookmark, { favorite: !bookmark.favorite });
+}
+
+async function onToggleBookmarkArchived(bookmark) {
+  await saveBookmark(bookmark, { archived: !bookmark.archived });
 }
 
 function onGroupDragStart(event, groupID) {
@@ -792,13 +816,18 @@ function filterBookmarks(bookmarks) {
   });
 }
 
+function shouldShowBookmark(bookmark) {
+  if (!bookmark.archived) return true;
+  return state.search.length > 0 && state.includeArchivedInSearch;
+}
+
 function matchesSearch(...parts) {
   if (!state.search) return true;
   const haystack = parts.join(" ").toLowerCase();
   return haystack.includes(state.search);
 }
 
-function updateSearchInfo(groupCount, matchCount) {
+function updateSearchInfo(groupCount, matchCount, archivedMatchCount = 0) {
   if (!state.search) {
     els.searchInfo.textContent = "Suche in Titeln, URLs, Notizen und Gruppen.";
     return;
@@ -806,7 +835,10 @@ function updateSearchInfo(groupCount, matchCount) {
 
   const pluralBookmarks = matchCount === 1 ? "Lesezeichen" : "Lesezeichen";
   const pluralGroups = groupCount === 1 ? "Gruppe" : "Gruppen";
-  els.searchInfo.textContent = `${matchCount} ${pluralBookmarks} in ${groupCount} ${pluralGroups} gefunden.`;
+  const archiveHint = state.includeArchivedInSearch
+    ? ` (${archivedMatchCount} aus Archiv)`
+    : "";
+  els.searchInfo.textContent = `${matchCount} ${pluralBookmarks} in ${groupCount} ${pluralGroups} gefunden${archiveHint}.`;
 }
 
 async function onCreateGroup(event) {
@@ -914,6 +946,7 @@ async function onCreateBookmark(event) {
     tags: parseTagsInput(formData.get("tags")),
     favorite: formData.get("favorite") === "on",
     pinned: formData.get("pinned") === "on",
+    archived: false,
     sort_order: nextSortOrderForGroup(groupID),
   };
 
@@ -1036,6 +1069,7 @@ async function saveBookmark(bookmark, patch, withHint = true) {
     tags: patch.tags ?? bookmark.tags ?? [],
     favorite: patch.favorite ?? Boolean(bookmark.favorite),
     pinned: patch.pinned ?? Boolean(bookmark.pinned),
+    archived: patch.archived ?? Boolean(bookmark.archived),
     sort_order: patch.sort_order ?? Number(bookmark.sort_order ?? 0),
   };
 

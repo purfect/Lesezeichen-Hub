@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lesezeichen Archiv</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="bg-shape bg-shape-1"></div>
+  <div class="bg-shape bg-shape-2"></div>
+
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Persoenlicher Browser Hub</p>
+      <h1>Archiv</h1>
+      <p class="search-info">Archivierte Lesezeichen als separate Linkliste.</p>
+    </div>
+    <div class="topbar-actions">
+      <a class="gear-link" href="/" aria-label="Zur Startseite">Zurueck</a>
+    </div>
+  </header>
+
+  <main class="overview-main">
+    <section class="panel">
+      <h2>Archivierte Links</h2>
+      <p id="archive-summary" class="search-info"></p>
+      <div id="archive-groups" class="archive-groups"></div>
+    </section>
+  </main>
+
+  <p id="status" class="status"></p>
+  <script src="/static/archive.js" defer></script>
+</body>
+</html>

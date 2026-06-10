@@ -45,6 +45,7 @@ type bookmark struct {
 	Tags      []string   `json:"tags"`
 	Favorite  bool       `json:"favorite"`
 	Pinned    bool       `json:"pinned"`
+	Archived  bool       `json:"archived"`
 	SortOrder int        `json:"sort_order"`
 	RemindAt  *time.Time `json:"remind_at,omitempty"`
 	CreatedAt *time.Time `json:"created_at,omitempty"`
@@ -73,6 +74,7 @@ type importBookmark struct {
 	Tags      []string `json:"tags"`
 	Favorite  bool     `json:"favorite"`
 	Pinned    bool     `json:"pinned"`
+	Archived  bool     `json:"archived"`
 	SortOrder int      `json:"sort_order"`
 	RemindAt  string   `json:"remind_at"`
 }
@@ -183,6 +185,7 @@ func initializeSchema(db *sql.DB) error {
 		`ALTER TABLE bookmarks ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE bookmarks ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE bookmarks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE bookmarks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE bookmarks ADD COLUMN remind_at DATETIME NULL`,
 	}
 
@@ -309,6 +312,7 @@ func (app *application) handleImport(w http.ResponseWriter, r *http.Request) {
 			bookmarks = append(bookmarks, importBookmark{
 				Title:     dial.Title,
 				URL:       dial.URL,
+				Archived:  false,
 				SortOrder: i,
 			})
 		}
@@ -419,6 +423,7 @@ func (app *application) handleImport(w http.ResponseWriter, r *http.Request) {
 			tagsRaw := serializeTags(b.Tags)
 			favoriteInt := boolToInt(b.Favorite)
 			pinnedInt := boolToInt(b.Pinned)
+			archivedInt := boolToInt(b.Archived)
 			var bookmarkID int64
 			err = tx.QueryRowContext(
 				r.Context(),
@@ -429,7 +434,7 @@ func (app *application) handleImport(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, sql.ErrNoRows) {
 				if _, err := tx.ExecContext(
 					r.Context(),
-					`INSERT INTO bookmarks(group_id, title, url, notes, tags, favorite, pinned, sort_order, remind_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					`INSERT INTO bookmarks(group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 					groupID,
 					title,
 					urlValue,
@@ -437,6 +442,7 @@ func (app *application) handleImport(w http.ResponseWriter, r *http.Request) {
 					tagsRaw,
 					favoriteInt,
 					pinnedInt,
+					archivedInt,
 					b.SortOrder,
 					remindAt,
 				); err != nil {
@@ -450,12 +456,13 @@ func (app *application) handleImport(w http.ResponseWriter, r *http.Request) {
 			} else {
 				if _, err := tx.ExecContext(
 					r.Context(),
-					`UPDATE bookmarks SET title = ?, notes = ?, tags = ?, favorite = ?, pinned = ?, sort_order = ?, remind_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+					`UPDATE bookmarks SET title = ?, notes = ?, tags = ?, favorite = ?, pinned = ?, archived = ?, sort_order = ?, remind_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 					title,
 					notes,
 					tagsRaw,
 					favoriteInt,
 					pinnedInt,
+					archivedInt,
 					b.SortOrder,
 					remindAt,
 					bookmarkID,
@@ -658,6 +665,7 @@ func (app *application) handleBookmarks(w http.ResponseWriter, r *http.Request) 
 		Tags      []string `json:"tags"`
 		Favorite  bool     `json:"favorite"`
 		Pinned    bool     `json:"pinned"`
+		Archived  bool     `json:"archived"`
 		SortOrder int      `json:"sort_order"`
 		RemindAt  string   `json:"remind_at"`
 	}
@@ -688,7 +696,7 @@ func (app *application) handleBookmarks(w http.ResponseWriter, r *http.Request) 
 
 	res, err := app.db.ExecContext(
 		r.Context(),
-		`INSERT INTO bookmarks(group_id, title, url, notes, tags, favorite, pinned, sort_order, remind_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO bookmarks(group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		payload.GroupID,
 		title,
 		urlValue,
@@ -696,6 +704,7 @@ func (app *application) handleBookmarks(w http.ResponseWriter, r *http.Request) 
 		serializeTags(payload.Tags),
 		boolToInt(payload.Favorite),
 		boolToInt(payload.Pinned),
+		boolToInt(payload.Archived),
 		payload.SortOrder,
 		remindAt,
 	)
@@ -725,6 +734,7 @@ func (app *application) handleBookmarkRoutes(w http.ResponseWriter, r *http.Requ
 			Tags      []string `json:"tags"`
 			Favorite  bool     `json:"favorite"`
 			Pinned    bool     `json:"pinned"`
+			Archived  bool     `json:"archived"`
 			SortOrder int      `json:"sort_order"`
 			RemindAt  string   `json:"remind_at"`
 		}
@@ -756,7 +766,7 @@ func (app *application) handleBookmarkRoutes(w http.ResponseWriter, r *http.Requ
 		res, err := app.db.ExecContext(
 			r.Context(),
 			`UPDATE bookmarks
-			 SET group_id = ?, title = ?, url = ?, notes = ?, tags = ?, favorite = ?, pinned = ?, sort_order = ?, remind_at = ?, updated_at = CURRENT_TIMESTAMP
+			 SET group_id = ?, title = ?, url = ?, notes = ?, tags = ?, favorite = ?, pinned = ?, archived = ?, sort_order = ?, remind_at = ?, updated_at = CURRENT_TIMESTAMP
 			 WHERE id = ?`,
 			payload.GroupID,
 			title,
@@ -765,6 +775,7 @@ func (app *application) handleBookmarkRoutes(w http.ResponseWriter, r *http.Requ
 			serializeTags(payload.Tags),
 			boolToInt(payload.Favorite),
 			boolToInt(payload.Pinned),
+			boolToInt(payload.Archived),
 			payload.SortOrder,
 			remindAt,
 			bookmarkID,
@@ -845,7 +856,7 @@ func (app *application) reorderBookmarksInGroup(w http.ResponseWriter, r *http.R
 func (app *application) listBookmarksByGroup(w http.ResponseWriter, r *http.Request, groupID int64) {
 	rows, err := app.db.QueryContext(
 		r.Context(),
-		`SELECT id, group_id, title, url, notes, tags, favorite, pinned, sort_order, remind_at, created_at, updated_at
+		`SELECT id, group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at, created_at, updated_at
 		 FROM bookmarks WHERE group_id = ? ORDER BY pinned DESC, sort_order ASC, id ASC`,
 		groupID,
 	)
@@ -861,13 +872,15 @@ func (app *application) listBookmarksByGroup(w http.ResponseWriter, r *http.Requ
 		var tagsRaw string
 		var favoriteInt int
 		var pinnedInt int
-		if err := rows.Scan(&b.ID, &b.GroupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &b.SortOrder, &b.RemindAt, &b.CreatedAt, &b.UpdatedAt); err != nil {
+		var archivedInt int
+		if err := rows.Scan(&b.ID, &b.GroupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &archivedInt, &b.SortOrder, &b.RemindAt, &b.CreatedAt, &b.UpdatedAt); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
 		b.Tags = parseTags(tagsRaw)
 		b.Favorite = favoriteInt == 1
 		b.Pinned = pinnedInt == 1
+		b.Archived = archivedInt == 1
 		items = append(items, b)
 	}
 	if err := rows.Err(); err != nil {
@@ -904,7 +917,7 @@ func (app *application) fetchState(ctx context.Context) ([]group, error) {
 	for i := range groups {
 		bRows, err := app.db.QueryContext(
 			ctx,
-			`SELECT id, group_id, title, url, notes, tags, favorite, pinned, sort_order, remind_at, created_at, updated_at
+			`SELECT id, group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at, created_at, updated_at
 			 FROM bookmarks WHERE group_id = ? ORDER BY pinned DESC, sort_order ASC, id ASC`,
 			groups[i].ID,
 		)
@@ -918,13 +931,15 @@ func (app *application) fetchState(ctx context.Context) ([]group, error) {
 			var tagsRaw string
 			var favoriteInt int
 			var pinnedInt int
-			if err := bRows.Scan(&b.ID, &b.GroupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &b.SortOrder, &b.RemindAt, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			var archivedInt int
+			if err := bRows.Scan(&b.ID, &b.GroupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &archivedInt, &b.SortOrder, &b.RemindAt, &b.CreatedAt, &b.UpdatedAt); err != nil {
 				bRows.Close()
 				return nil, err
 			}
 			b.Tags = parseTags(tagsRaw)
 			b.Favorite = favoriteInt == 1
 			b.Pinned = pinnedInt == 1
+			b.Archived = archivedInt == 1
 			items = append(items, b)
 		}
 		if err := bRows.Err(); err != nil {
@@ -1109,6 +1124,7 @@ func writeCSVExport(w io.Writer, groups []group) error {
 		"tags",
 		"favorite",
 		"pinned",
+		"archived",
 		"sort_order",
 		"remind_at",
 	}
@@ -1129,6 +1145,7 @@ func writeCSVExport(w io.Writer, groups []group) error {
 				strings.Join(b.Tags, ","),
 				strconv.FormatBool(b.Favorite),
 				strconv.FormatBool(b.Pinned),
+				strconv.FormatBool(b.Archived),
 				strconv.Itoa(b.SortOrder),
 				formatOptionalDate(b.RemindAt),
 			}

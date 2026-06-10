@@ -113,6 +113,12 @@ h1 {
   width: min(460px, 100%);
 }
 
+.search-option {
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -490,6 +496,11 @@ button.danger:hover {
   box-shadow: 0 0 0 1px rgba(214, 76, 92, 0.4) inset;
 }
 
+.bookmark-item.is-archived {
+  opacity: 0.74;
+  border-style: dashed;
+}
+
 .bookmark-tags {
   margin-top: 8px;
   display: flex;
@@ -592,7 +603,8 @@ button.danger:hover {
 }
 
 .toggle-pin.active,
-.toggle-favorite.active {
+.toggle-favorite.active,
+.toggle-archive.active {
   border-color: rgba(44, 183, 161, 0.55);
   color: #baf3ea;
 }
@@ -671,6 +683,22 @@ button.danger:hover {
 
 .simple-list small {
   color: var(--muted);
+}
+
+.archive-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.archive-link-list a {
+  color: #9ed9ff;
+  text-decoration: none;
+}
+
+.archive-link-list a:hover {
+  text-decoration: underline;
 }
 
 .edit-dialog {

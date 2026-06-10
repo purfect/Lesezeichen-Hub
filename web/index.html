@@ -20,9 +20,15 @@
       <div class="search-wrap">
         <input id="search" type="search" placeholder="Suche nach Titel, URL oder Notiz..." />
         <button id="search-clear" class="search-clear hidden" type="button" aria-label="Suche leeren">X</button>
+        <label class="search-option inline-check" for="search-archive">
+          <input id="search-archive" type="checkbox" /> Archiv durchsuchen
+        </label>
       </div>
       <a class="gear-link" href="/static/overview.html" aria-label="Zur Uebersicht">
         &#128161;
+      </a>
+      <a class="gear-link" href="/static/archive.html" aria-label="Zum Archiv">
+        &#128450;
       </a>
     </div>
   </header>
@@ -155,9 +161,10 @@
         <div class="bookmark-tags"></div>
       </div>
       <div class="row-actions">
-        <button class="ghost toggle-pin" type="button" aria-label="Pin umschalten">Pin</button>
-        <button class="ghost toggle-favorite" type="button" aria-label="Favorit umschalten">Fav</button>
-        <button class="ghost edit-bookmark" type="button">Bearbeiten</button>
+        <button class="ghost toggle-pin icon-only" type="button" title="Anpinnen" aria-label="Anpinnen">📌</button>
+        <button class="ghost toggle-favorite icon-only" type="button" title="Favorit setzen" aria-label="Favorit setzen">★</button>
+        <button class="ghost toggle-archive icon-only" type="button" title="Archivieren" aria-label="Archivieren">🗃</button>
+        <button class="ghost edit-bookmark icon-only" type="button" title="Bearbeiten" aria-label="Bearbeiten">⚙</button>
         <button class="danger delete-bookmark icon-only" type="button" aria-label="Lesezeichen loeschen">X</button>
       </div>
     </li>

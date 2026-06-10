@@ -3,6 +3,7 @@ const els = {
   largestGroups: document.getElementById("largest-groups"),
   topTags: document.getElementById("top-tags"),
   reminderSummary: document.getElementById("reminder-summary"),
+  archiveSummary: document.getElementById("archive-summary"),
   status: document.getElementById("status"),
 };
 
@@ -25,8 +26,13 @@ function renderOverview(groups) {
   const favorites = bookmarks.filter((bookmark) => Boolean(bookmark.favorite)).length;
   const pinned = bookmarks.filter((bookmark) => Boolean(bookmark.pinned)).length;
   const withNotes = bookmarks.filter((bookmark) => String(bookmark.notes || "").trim().length > 0).length;
+  const archived = bookmarks.filter((bookmark) => Boolean(bookmark.archived)).length;
+  const active = bookmarks.length - archived;
+  const archiveRatio = bookmarks.length > 0 ? Math.round((archived / bookmarks.length) * 100) : 0;
 
-  const reminders = bookmarks.filter((bookmark) => parseBookmarkDate(bookmark.remind_at));
+  const reminders = bookmarks
+    .filter((bookmark) => !bookmark.archived)
+    .filter((bookmark) => parseBookmarkDate(bookmark.remind_at));
   const dueSoon = reminders.filter((bookmark) => getDaysUntil(parseBookmarkDate(bookmark.remind_at)) <= 3).length;
   const overdue = reminders.filter((bookmark) => getDaysUntil(parseBookmarkDate(bookmark.remind_at)) < 0).length;
 
@@ -36,6 +42,9 @@ function renderOverview(groups) {
   const stats = [
     { label: "Gruppen", value: groups.length },
     { label: "Lesezeichen", value: bookmarks.length },
+    { label: "Aktiv", value: active },
+    { label: "Archiv", value: archived },
+    { label: "Archivquote", value: `${archiveRatio}%` },
     { label: "Favoriten", value: favorites },
     { label: "Angepinnt", value: pinned },
     { label: "Mit Notiz", value: withNotes },
@@ -63,6 +72,7 @@ function renderOverview(groups) {
   renderLargestGroups(groups);
   renderTopTags(allTags);
   renderRemindersSummary(reminders.length, dueSoon, overdue);
+  renderArchiveSummary(groups, archived, active, archiveRatio);
 }
 
 function renderLargestGroups(groups) {
@@ -132,6 +142,33 @@ function renderRemindersSummary(total, dueSoon, overdue) {
     const li = document.createElement("li");
     li.textContent = entry;
     els.reminderSummary.appendChild(li);
+  }
+}
+
+function renderArchiveSummary(groups, archivedTotal, activeTotal, archiveRatio) {
+  els.archiveSummary.innerHTML = "";
+
+  const topArchivedGroups = [...groups]
+    .map((group) => ({
+      name: group.name || "Unbenannt",
+      archived: (group.bookmarks || []).filter((bookmark) => Boolean(bookmark.archived)).length,
+    }))
+    .filter((group) => group.archived > 0)
+    .sort((a, b) => b.archived - a.archived)
+    .slice(0, 3)
+    .map((group) => `${group.name}: ${group.archived}`);
+
+  const entries = [
+    `Archiviert gesamt: ${archivedTotal}`,
+    `Aktiv gesamt: ${activeTotal}`,
+    `Archivquote: ${archiveRatio}%`,
+    `Top Archiv-Gruppen: ${topArchivedGroups.length > 0 ? topArchivedGroups.join(", ") : "keine"}`,
+  ];
+
+  for (const entry of entries) {
+    const li = document.createElement("li");
+    li.textContent = entry;
+    els.archiveSummary.appendChild(li);
   }
 }
 
