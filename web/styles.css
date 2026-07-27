@@ -749,3 +749,60 @@ button.danger:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* ─── Statistik-Seite: Balkendiagramme ─────────────────────────────────── */
+
+.stats-bar-chart {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 220px) 1fr 48px;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.88rem;
+}
+
+.bar-label {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(147, 170, 201, 0.12);
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 420ms ease;
+}
+
+.bar-accent {
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+}
+
+.bar-group {
+  background: linear-gradient(90deg, #3f6bc7, #2a4d99);
+}
+
+.bar-count {
+  text-align: right;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-scroll-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}

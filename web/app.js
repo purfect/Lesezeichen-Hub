@@ -59,6 +59,7 @@ function init() {
     state.search = e.target.value.trim().toLowerCase();
     updateSearchClearButton();
     render();
+    scheduleSearchTracking(state.search);
   });
   els.searchArchive.addEventListener("change", (e) => {
     state.includeArchivedInSearch = Boolean(e.target.checked);
@@ -76,6 +77,38 @@ function clearSearch() {
   updateSearchClearButton();
   render();
   els.search.focus();
+}
+
+let _searchTrackTimer = null;
+
+function scheduleSearchTracking(term) {
+  clearTimeout(_searchTrackTimer);
+  if (term.length < 2) return;
+  _searchTrackTimer = setTimeout(() => trackSearch(term), 1200);
+}
+
+function trackSearch(term) {
+  let history = [];
+  try {
+    history = JSON.parse(localStorage.getItem("lsz_search_history") || "[]");
+    if (!Array.isArray(history)) history = [];
+  } catch { history = []; }
+
+  const existing = history.find((e) => e.term === term);
+  if (existing) {
+    existing.count += 1;
+    existing.last = Date.now();
+  } else {
+    history.push({ term, count: 1, last: Date.now() });
+  }
+
+  // Maximal 500 Eintraege, aelteste verwerfen
+  if (history.length > 500) {
+    history.sort((a, b) => b.last - a.last);
+    history = history.slice(0, 500);
+  }
+
+  localStorage.setItem("lsz_search_history", JSON.stringify(history));
 }
 
 function parseTagsInput(raw) {
