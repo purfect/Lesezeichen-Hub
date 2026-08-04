@@ -854,3 +854,23 @@ button.danger:hover {
 .metal-footer-hint.is-error {
   color: #ffb3ba;
 }
+
+.metal-footer-link {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  color: #b9f3e9;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.82rem;
+  padding: 6px 10px;
+  border: 1px solid rgba(44, 183, 161, 0.28);
+  border-radius: 999px;
+  background: rgba(18, 37, 52, 0.72);
+}
+
+.metal-footer-link:hover {
+  background: rgba(24, 49, 69, 0.95);
+  text-decoration: none;
+}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"html/template"
 	"io"
 	"io/fs"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"regexp"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +29,7 @@ import (
 
 type application struct {
 	db             *sql.DB
+	webFS          fs.FS
 	metalPricesMu  sync.RWMutex
 	metalPrices    metalPricesPayload
 	metalPricesAt  time.Time
@@ -40,6 +43,21 @@ type metalPricesPayload struct {
 	Cached           bool      `json:"cached"`
 	Stale            bool      `json:"stale"`
 	LastError        string    `json:"last_error,omitempty"`
+}
+
+type silverProduct struct {
+	Name      string  `json:"name"`
+	Category  string  `json:"category"`
+	Price     float64 `json:"price"`
+	PriceText string  `json:"price_text"`
+	URL       string  `json:"url"`
+}
+
+type silverPricesPayload struct {
+	BestProduct *silverProduct  `json:"best_product"`
+	AllProducts []silverProduct `json:"all_products"`
+	FetchedAt   time.Time       `json:"fetched_at"`
+	Source      string          `json:"source"`
 }
 
 type group struct {
@@ -127,6 +145,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("init embedded web assets: %v", err)
 	}
+	app.webFS = webFS
 
 	indexHTML, err := fs.ReadFile(webFS, "index.html")
 	if err != nil {
@@ -141,6 +160,8 @@ func main() {
 	mux.HandleFunc("/api/bookmarks", app.handleBookmarks)
 	mux.HandleFunc("/api/bookmarks/", app.handleBookmarkRoutes)
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
+	mux.HandleFunc("/api/silver-prices", app.handleSilverPrices)
+	mux.HandleFunc("/silver-preise", app.handleSilverPricesPage)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(webFS))))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -985,6 +1006,40 @@ func (app *application) handleMetalPrices(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, prices)
 }
 
+func (app *application) handleSilverPrices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+
+	prices, err := fetchSilverPrices(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, prices)
+}
+
+func (app *application) handleSilverPricesPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+
+	page, err := fs.ReadFile(app.webFS, "silver-prices.html")
+	if err != nil {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("seite nicht gefunden"))
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(page); err != nil {
+		log.Printf("write silver-prices.html: %v", err)
+	}
+}
+
 func (app *application) getMetalPrices(ctx context.Context) (metalPricesPayload, error) {
 	const cacheTTL = 2 * time.Hour
 
@@ -1033,6 +1088,270 @@ func (app *application) getMetalPrices(ctx context.Context) (metalPricesPayload,
 	app.metalPricesMu.RUnlock()
 
 	return metalPricesPayload{}, fmt.Errorf("preise konnten nicht geladen werden: %s", fetchErr.Error())
+}
+
+func fetchSilverPrices(ctx context.Context) (silverPricesPayload, error) {
+	const sourceURL = "https://www.edelmetall-handel.de/anlegen/silber?fine_weight%5B%5D=31%2C1+g+%281oz%29&ipp=100&sort=price_asc"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return silverPricesPayload{}, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	client := &http.Client{Timeout: 25 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return silverPricesPayload{}, fmt.Errorf("request fehlgeschlagen: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return silverPricesPayload{}, fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 3*1024*1024))
+	if err != nil {
+		return silverPricesPayload{}, fmt.Errorf("response konnte nicht gelesen werden: %w", err)
+	}
+
+	products, err := parseSilverProductsFromHTML(string(body), sourceURL)
+	if err != nil {
+		return silverPricesPayload{
+			BestProduct: &silverProduct{
+				Name:      "Aktuelle Preisabfrage momentan nicht verfügbar",
+				Category:  "Silber 1oz",
+				Price:     0,
+				PriceText: "n/a",
+				URL:       sourceURL,
+			},
+			AllProducts: []silverProduct{},
+			FetchedAt:   time.Now().UTC(),
+			Source:      sourceURL,
+		}, nil
+	}
+
+	sort.Slice(products, func(i, j int) bool {
+		return products[i].Price < products[j].Price
+	})
+
+	limit := len(products)
+	if limit > 20 {
+		limit = 20
+	}
+
+	var bestProduct *silverProduct
+	if len(products) > 0 {
+		best := products[0]
+		bestProduct = &best
+	}
+
+	return silverPricesPayload{
+		BestProduct: bestProduct,
+		AllProducts: products[:limit],
+		FetchedAt:   time.Now().UTC(),
+		Source:      sourceURL,
+	}, nil
+}
+
+func parseSilverProductsFromHTML(htmlSource, source string) ([]silverProduct, error) {
+	htmlSource = strings.ReplaceAll(htmlSource, "\n", " ")
+	htmlSource = strings.ReplaceAll(htmlSource, "\r", " ")
+
+	products := make([]silverProduct, 0)
+	seen := make(map[string]struct{})
+
+	productBlocksRe := regexp.MustCompile(`(?is)<product-item[^>]*>(.*?)</product-item>`)
+	blocks := productBlocksRe.FindAllStringSubmatch(htmlSource, -1)
+	if len(blocks) > 0 {
+		for _, block := range blocks {
+			blockHTML := block[1]
+			anchorRe := regexp.MustCompile(`(?is)<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>`)
+			anchorMatches := anchorRe.FindAllStringSubmatchIndex(blockHTML, -1)
+			if len(anchorMatches) == 0 {
+				continue
+			}
+
+			var name string
+			var href string
+			for _, match := range anchorMatches {
+				anchorHTML := blockHTML[match[0]:match[1]]
+				candidateHref := blockHTML[match[2]:match[3]]
+				candidateContent := blockHTML[match[4]:match[5]]
+				candidateName := sanitizeHTMLText(candidateContent)
+				if candidateName == "" {
+					continue
+				}
+				if !looksLike1ozSilverProduct(candidateName, candidateHref, anchorHTML) {
+					continue
+				}
+				name = candidateName
+				href = candidateHref
+				break
+			}
+			if name == "" || href == "" {
+				continue
+			}
+
+			priceText, price, ok := findNearbyPrice(blockHTML, 0, len(blockHTML))
+			if !ok || price <= 0 {
+				continue
+			}
+
+			key := strings.ToLower(name)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+
+			products = append(products, silverProduct{
+				Name:      cleanProductName(name),
+				Category:  "Silber 1oz",
+				Price:     price,
+				PriceText: priceText,
+				URL:       normalizeProductURL(href),
+			})
+		}
+	}
+
+	if len(products) == 0 {
+		anchorRe := regexp.MustCompile(`(?is)<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>`)
+		anchorMatches := anchorRe.FindAllStringSubmatchIndex(htmlSource, -1)
+		if len(anchorMatches) == 0 {
+			return nil, fmt.Errorf("keine produkt-links gefunden in %s", source)
+		}
+		for _, match := range anchorMatches {
+			anchorHTML := htmlSource[match[0]:match[1]]
+			href := htmlSource[match[2]:match[3]]
+			content := htmlSource[match[4]:match[5]]
+			name := sanitizeHTMLText(content)
+			if name == "" || !looksLike1ozSilverProduct(name, href, anchorHTML) {
+				continue
+			}
+			priceText, price, ok := findNearbyPrice(htmlSource, match[0], match[1])
+			if !ok || price <= 0 {
+				continue
+			}
+			key := strings.ToLower(name)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			products = append(products, silverProduct{
+				Name:      cleanProductName(name),
+				Category:  "Silber 1oz",
+				Price:     price,
+				PriceText: priceText,
+				URL:       normalizeProductURL(href),
+			})
+		}
+	}
+
+	if len(products) == 0 {
+		return nil, fmt.Errorf("keine 1oz-produkte gefunden in %s", source)
+	}
+
+	return products, nil
+}
+
+func looksLike1ozSilverProduct(name, href, anchorHTML string) bool {
+	text := strings.ToLower(strings.TrimSpace(name + " " + href + " " + anchorHTML))
+	if strings.Contains(text, "/anlegen/silber") || strings.Contains(text, "?fine_weight") || strings.Contains(text, "sort=") || strings.Contains(text, "price%5b") || strings.Contains(text, "/anlegen/silber/") || strings.Contains(text, "junksilver") || strings.Contains(text, "combibar") || strings.Contains(text, "wunschliste") || strings.Contains(text, "warenkorb") || strings.Contains(text, "resale") {
+		return false
+	}
+	if strings.Contains(text, "silbermünze") || strings.Contains(text, "silbermuenze") {
+		return true
+	}
+	if strings.Contains(text, "silber") && strings.Contains(text, "1") && strings.Contains(text, "oz") {
+		return true
+	}
+	if strings.Contains(text, "1 oz") || strings.Contains(text, "1oz") || strings.Contains(text, "31,1") || strings.Contains(text, "31,1g") || strings.Contains(text, "31,1 g") {
+		return true
+	}
+	return false
+}
+
+func findNearbyPrice(htmlSource string, anchorStart, anchorEnd int) (string, float64, bool) {
+	start := anchorStart
+	if start < 0 {
+		start = 0
+	}
+	end := anchorEnd + 20000
+	if end > len(htmlSource) {
+		end = len(htmlSource)
+	}
+	context := htmlSource[start:end]
+
+	pricePatterns := []string{
+		`(?is)<span[^>]*itemprop=["']price["'][^>]*content=["']([0-9.]+)["'][^>]*>`,
+		`(?is)<span[^>]*content=["']([0-9.]+)["'][^>]*itemprop=["']price["'][^>]*>`,
+		`(?is)<span[^>]*class=["'][^"']*money-price__amount[^"']*["'][^>]*>([^<]+)</span>`,
+		`(?is)<span[^>]*itemprop=["']price["'][^>]*class=["'][^"']*money-price__amount[^"']*["'][^>]*>([^<]+)</span>`,
+		`(?is)([0-9]{1,3}(?:[\.,][0-9]{3})*(?:[\.,][0-9]{2})?)\s*€`,
+	}
+
+	for _, pattern := range pricePatterns {
+		priceRe := regexp.MustCompile(pattern)
+		match := priceRe.FindStringSubmatch(context)
+		if len(match) < 2 {
+			continue
+		}
+		price, err := parsePriceString(match[1])
+		if err == nil && price > 0 {
+			return strings.TrimSpace(match[1]), price, true
+		}
+	}
+
+	return "", 0, false
+}
+
+func cleanProductName(name string) string {
+	normalized := strings.TrimSpace(name)
+	normalized = strings.ReplaceAll(normalized, "- Hauptansicht", "")
+	normalized = strings.ReplaceAll(normalized, "Hauptansicht", "")
+	normalized = strings.TrimSpace(normalized)
+	return normalized
+}
+
+func parsePriceString(raw string) (float64, error) {
+	normalized := strings.TrimSpace(raw)
+	normalized = strings.ReplaceAll(normalized, "€", "")
+	normalized = strings.ReplaceAll(normalized, "\u00a0", "")
+	if strings.Contains(normalized, ",") {
+		normalized = strings.ReplaceAll(normalized, ".", "")
+		normalized = strings.ReplaceAll(normalized, ",", ".")
+	}
+	normalized = strings.TrimSpace(normalized)
+	if normalized == "" {
+		return 0, fmt.Errorf("leerer preis")
+	}
+	value, err := strconv.ParseFloat(normalized, 64)
+	if err != nil {
+		return 0, err
+	}
+	return value, nil
+}
+
+func normalizeProductURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return raw
+	}
+	if strings.HasPrefix(raw, "/") {
+		return "https://www.edelmetall-handel.de" + raw
+	}
+	return "https://www.edelmetall-handel.de/" + raw
+}
+
+func sanitizeHTMLText(raw string) string {
+	text := strings.ReplaceAll(raw, "&nbsp;", " ")
+	text = html.UnescapeString(text)
+	text = regexp.MustCompile(`(?is)<[^>]+>`).ReplaceAllString(text, " ")
+	text = strings.Join(strings.Fields(text), " ")
+	return strings.TrimSpace(text)
 }
 
 func joinErrors(errs ...error) string {

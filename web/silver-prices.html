@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Silberpreis Finder</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .silver-page {
+      flex: 1;
+      display: grid;
+      gap: 16px;
+      padding: 20px clamp(16px, 3vw, 36px) 28px;
+      position: relative;
+      z-index: 2;
+    }
+
+    .silver-card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(13, 22, 36, 0.9);
+      box-shadow: 0 14px 34px rgba(2, 8, 16, 0.44);
+      padding: 18px;
+    }
+
+    .silver-card h2,
+    .silver-card h3 {
+      margin-top: 0;
+    }
+
+    .silver-lead {
+      color: var(--muted);
+      margin-top: 6px;
+    }
+
+    .silver-top { display: grid; gap: 10px; }
+
+    .silver-price {
+      font-size: clamp(1.6rem, 3vw, 2.4rem);
+      font-weight: 800;
+      color: #b9f3e9;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .silver-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .silver-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid rgba(147, 170, 201, 0.2);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: rgba(17, 29, 45, 0.7);
+    }
+
+    .silver-item a {
+      color: #d8e7fb;
+      text-decoration: none;
+    }
+
+    .silver-item a:hover {
+      text-decoration: underline;
+    }
+
+    .silver-price-tag {
+      font-weight: 700;
+      color: #b9f3e9;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .silver-status {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-top: 8px;
+    }
+
+    .silver-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 9px 14px;
+      text-decoration: none;
+      color: var(--ink);
+      background: rgba(20, 34, 51, 0.9);
+      width: fit-content;
+    }
+
+    @media (max-width: 700px) {
+      .silver-item { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-shape bg-shape-1"></div>
+  <div class="bg-shape bg-shape-2"></div>
+
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Persoenlicher Browser Hub</p>
+      <h1>Silberpreis Finder</h1>
+      <p class="search-info">Der günstigste 1oz-Silberpreis aus dem aktuellen Angebot.</p>
+    </div>
+    <div class="topbar-actions">
+      <a class="gear-link" href="/" aria-label="Zur Startseite">Zurueck</a>
+    </div>
+  </header>
+
+  <main class="silver-page">
+    <section class="silver-card">
+      <div class="silver-top">
+        <h2>Aktueller Bestpreis</h2>
+        <div id="silver-best" class="silver-price">wird geladen…</div>
+        <div id="silver-best-meta" class="silver-lead"></div>
+      </div>
+    </section>
+
+    <section class="silver-card">
+      <h3>Weitere 1oz-Angebote</h3>
+      <div id="silver-list" class="silver-list"></div>
+      <p id="silver-status" class="silver-status">Lade aktuelle Preise…</p>
+    </section>
+  </main>
+
+  <footer class="metal-footer" aria-live="polite">
+    <div class="metal-footer-inner">
+      <p class="metal-footer-title">Edelmetall Ankauf (Bankhandelsfaehig)</p>
+      <p class="metal-footer-values">
+        <span>Gold: <strong id="metal-price-gold">-</strong></span>
+        <span>Silber: <strong id="metal-price-silver">-</strong></span>
+      </p>
+      <p id="metal-price-updated" class="metal-footer-updated">Stand: -</p>
+      <p id="metal-price-hint" class="metal-footer-hint">Quelle: scheideanstalt.de</p>
+    </div>
+  </footer>
+
+  <script src="/static/metal-prices.js" defer></script>
+  <script>
+    async function loadSilverPrices() {
+      const best = document.getElementById('silver-best');
+      const meta = document.getElementById('silver-best-meta');
+      const list = document.getElementById('silver-list');
+      const status = document.getElementById('silver-status');
+
+      best.textContent = 'wird geladen…';
+      meta.textContent = '';
+      list.innerHTML = '';
+      status.textContent = 'Lade aktuelle Preise…';
+
+      try {
+        const response = await fetch('/api/silver-prices');
+        const payload = await response.json();
+
+        if (payload.error) {
+          throw new Error(payload.error);
+        }
+
+        if (!payload.best_product) {
+          best.textContent = 'Keine Treffer';
+          meta.textContent = 'Es konnten keine passenden 1oz-Angebote gefunden werden.';
+          status.textContent = 'Aktualisierung fehlgeschlagen.';
+          return;
+        }
+
+        const product = payload.best_product;
+        if (product.price > 0) {
+          best.textContent = `${product.price.toFixed(2)} €`;
+        } else {
+          best.textContent = 'aktuell nicht verfügbar';
+        }
+        meta.textContent = `${product.name}`;
+
+        if (payload.all_products && payload.all_products.length) {
+          list.innerHTML = payload.all_products.map((item, index) => `
+            <div class="silver-item">
+              <div>
+                <strong>#${index + 1} ${escapeHtml(item.name)}</strong>
+                <div class="silver-lead">${escapeHtml(item.category)}</div>
+              </div>
+              <div class="silver-price-tag">${item.price.toFixed(2)} €</div>
+              <a href="${escapeAttr(item.url)}" target="_blank" rel="noreferrer">Zum Angebot</a>
+            </div>
+          `).join('');
+        }
+
+        const stamp = payload.fetched_at ? new Date(payload.fetched_at).toLocaleString('de-DE') : 'jetzt';
+        status.textContent = `Aktualisiert: ${stamp} • Quelle: ${payload.source}`;
+      } catch (error) {
+        best.textContent = 'Fehler';
+        meta.textContent = error.message;
+        status.textContent = 'Die Preisabfrage konnte nicht geladen werden.';
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value);
+    }
+
+    loadSilverPrices();
+  </script>
+</body>
+</html>
