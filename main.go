@@ -15,16 +15,31 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 type application struct {
-	db *sql.DB
+	db             *sql.DB
+	metalPricesMu  sync.RWMutex
+	metalPrices    metalPricesPayload
+	metalPricesAt  time.Time
+	metalPricesErr string
+}
+
+type metalPricesPayload struct {
+	GoldEURPerGram   float64   `json:"gold_eur_per_g"`
+	SilverEURPerGram float64   `json:"silver_eur_per_g"`
+	FetchedAt        time.Time `json:"fetched_at"`
+	Cached           bool      `json:"cached"`
+	Stale            bool      `json:"stale"`
+	LastError        string    `json:"last_error,omitempty"`
 }
 
 type group struct {
@@ -125,6 +140,7 @@ func main() {
 	mux.HandleFunc("/api/groups/", app.handleGroupRoutes)
 	mux.HandleFunc("/api/bookmarks", app.handleBookmarks)
 	mux.HandleFunc("/api/bookmarks/", app.handleBookmarkRoutes)
+	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(webFS))))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -952,6 +968,155 @@ func (app *application) fetchState(ctx context.Context) ([]group, error) {
 	}
 
 	return groups, nil
+}
+
+func (app *application) handleMetalPrices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+
+	prices, err := app.getMetalPrices(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, prices)
+}
+
+func (app *application) getMetalPrices(ctx context.Context) (metalPricesPayload, error) {
+	const cacheTTL = 2 * time.Hour
+
+	app.metalPricesMu.RLock()
+	hasCache := !app.metalPricesAt.IsZero()
+	cacheFresh := hasCache && time.Since(app.metalPricesAt) < cacheTTL
+	if cacheFresh {
+		cached := app.metalPrices
+		cached.Cached = true
+		cached.Stale = false
+		app.metalPricesMu.RUnlock()
+		return cached, nil
+	}
+	app.metalPricesMu.RUnlock()
+
+	gold, silver, fetchErr := fetchBankPricesFromHomepage(ctx)
+
+	now := time.Now().UTC()
+	if fetchErr == nil {
+		fresh := metalPricesPayload{
+			GoldEURPerGram:   gold,
+			SilverEURPerGram: silver,
+			FetchedAt:        now,
+			Cached:           false,
+			Stale:            false,
+		}
+
+		app.metalPricesMu.Lock()
+		app.metalPrices = fresh
+		app.metalPricesAt = now
+		app.metalPricesErr = ""
+		app.metalPricesMu.Unlock()
+
+		return fresh, nil
+	}
+
+	app.metalPricesMu.RLock()
+	if !app.metalPricesAt.IsZero() {
+		stale := app.metalPrices
+		stale.Cached = true
+		stale.Stale = true
+		stale.LastError = fetchErr.Error()
+		app.metalPricesMu.RUnlock()
+		return stale, nil
+	}
+	app.metalPricesMu.RUnlock()
+
+	return metalPricesPayload{}, fmt.Errorf("preise konnten nicht geladen werden: %s", fetchErr.Error())
+}
+
+func joinErrors(errs ...error) string {
+	parts := make([]string, 0, len(errs))
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		parts = append(parts, err.Error())
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " | ")
+}
+
+func fetchBankPricesFromHomepage(ctx context.Context) (float64, float64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.scheideanstalt.de/nc?header-prices-v2", nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	req.Header.Set("User-Agent", "Lesezeichen-Hub/1.0 (+http://localhost)")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, 0, fmt.Errorf("request fehlgeschlagen")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, 0, fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 3*1024*1024))
+	if err != nil {
+		return 0, 0, fmt.Errorf("response konnte nicht gelesen werden")
+	}
+
+	html := string(body)
+	if !strings.Contains(strings.ToLower(html), "bankpreis") {
+		return 0, 0, fmt.Errorf("header-prices endpoint ohne bankpreis-daten")
+	}
+
+	gold, err := parseBankPriceEURPerGram(html, "Gold")
+	if err != nil {
+		return 0, 0, err
+	}
+	silver, err := parseBankPriceEURPerGram(html, "Silber")
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return gold, silver, nil
+}
+
+func parseBankPriceEURPerGram(html, metalLabel string) (float64, error) {
+	re := regexp.MustCompile(`(?is)` + regexp.QuoteMeta(metalLabel) + `\s*\(Bankpreis\)\s*</td>\s*<td[^>]*>\s*<span[^>]*>\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?)\s*</span>\s*€\s*/\s*g\s*</td>\s*<td[^>]*>\s*<span[^>]*>\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?)\s*</span>\s*€\s*/\s*g`)
+	match := re.FindStringSubmatch(html)
+	if len(match) != 3 {
+		return 0, fmt.Errorf("%s: bankpreis nicht gefunden", strings.ToLower(metalLabel))
+	}
+
+	postPrice, err := parseGermanDecimal(match[1])
+	if err != nil {
+		return 0, fmt.Errorf("%s: postankaufpreis ungueltig", strings.ToLower(metalLabel))
+	}
+	switchPrice, err := parseGermanDecimal(match[2])
+	if err != nil {
+		return 0, fmt.Errorf("%s: schalterankaufpreis ungueltig", strings.ToLower(metalLabel))
+	}
+
+	if switchPrice > 0 {
+		return switchPrice, nil
+	}
+
+	return postPrice, nil
+}
+
+func parseGermanDecimal(raw string) (float64, error) {
+	normalized := strings.TrimSpace(raw)
+	normalized = strings.ReplaceAll(normalized, ".", "")
+	normalized = strings.ReplaceAll(normalized, ",", ".")
+	return strconv.ParseFloat(normalized, 64)
 }
 
 func validateURL(raw string) error {

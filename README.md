@@ -49,6 +49,32 @@ Port anpassen:
 - Optional beim Start als Parameter: start-lesezeichen.cmd 2233
 - Beim Portwechsel wird ein alter Prozess automatisch beendet und neu gestartet
 
+## Webseite direkt aus Firefox speichern (Tampermonkey)
+
+Wenn du Seiten aus dem Browser direkt in den Hub schreiben willst, kannst du das mit Tampermonkey nutzen.
+
+Datei im Projekt:
+
+- tampermonkey-lesezeichen-hub.user.js
+
+Einrichtung:
+
+1. In Firefox die Erweiterung Tampermonkey installieren.
+2. In Tampermonkey ein neues Script anlegen.
+3. Den Inhalt aus tampermonkey-lesezeichen-hub.user.js einfuegen und speichern.
+4. Den Hub starten (Standard im Startskript: http://localhost:3233).
+
+Nutzung:
+
+- Tampermonkey-Menue: Im Lesezeichen-Hub speichern
+- Tastenkombination: Alt+Shift+B
+- Optional Hub-URL im Tampermonkey-Menue setzen, falls dein Port abweicht
+
+Hinweise:
+
+- Das Script fragt erst Gruppe, Titel, Notiz und Tags ab und sendet dann an /api/bookmarks.
+- Wenn noch keine Gruppen existieren, zuerst im Hub eine Gruppe anlegen.
+
 ## EXE bauen
 
 ### Lokal

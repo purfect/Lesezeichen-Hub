@@ -214,7 +214,20 @@
     </form>
   </dialog>
 
+  <footer class="metal-footer" aria-live="polite">
+    <div class="metal-footer-inner">
+      <p class="metal-footer-title">Edelmetall Ankauf (Bankhandelsfaehig)</p>
+      <p class="metal-footer-values">
+        <span>Gold: <strong id="metal-price-gold">-</strong></span>
+        <span>Silber: <strong id="metal-price-silver">-</strong></span>
+      </p>
+      <p id="metal-price-updated" class="metal-footer-updated">Stand: -</p>
+      <p id="metal-price-hint" class="metal-footer-hint">Quelle: scheideanstalt.de</p>
+    </div>
+  </footer>
+
   <p id="status" class="status"></p>
   <script src="/static/app.js" defer></script>
+  <script src="/static/metal-prices.js" defer></script>
 </body>
 </html>

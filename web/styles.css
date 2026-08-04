@@ -806,3 +806,51 @@ button.danger:hover {
   overflow-y: auto;
   padding-right: 4px;
 }
+
+.metal-footer {
+  position: relative;
+  z-index: 2;
+  padding: 0 clamp(16px, 3vw, 36px) 18px;
+}
+
+.metal-footer-inner {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(13, 22, 36, 0.88);
+  box-shadow: 0 12px 30px rgba(2, 8, 16, 0.42);
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.metal-footer-title {
+  margin: 0;
+  color: #d8e7fb;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.metal-footer-values {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: #dbe9fd;
+  font-size: 0.9rem;
+}
+
+.metal-footer-values strong {
+  color: #b9f3e9;
+  font-variant-numeric: tabular-nums;
+}
+
+.metal-footer-updated,
+.metal-footer-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.metal-footer-hint.is-error {
+  color: #ffb3ba;
+}
