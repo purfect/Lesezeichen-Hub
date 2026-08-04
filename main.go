@@ -34,6 +34,9 @@ type application struct {
 	metalPrices    metalPricesPayload
 	metalPricesAt  time.Time
 	metalPricesErr string
+	silverPricesMu sync.RWMutex
+	silverPrices   silverPricesPayload
+	silverPricesAt time.Time
 }
 
 type metalPricesPayload struct {
@@ -1012,13 +1015,47 @@ func (app *application) handleSilverPrices(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	prices, err := fetchSilverPrices(r.Context())
+	prices, err := app.getSilverPrices(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, prices)
+}
+
+func (app *application) getSilverPrices(ctx context.Context) (silverPricesPayload, error) {
+	const cacheTTL = 2 * time.Hour
+
+	app.silverPricesMu.RLock()
+	if !app.silverPricesAt.IsZero() && time.Since(app.silverPricesAt) < cacheTTL {
+		cached := app.silverPrices
+		app.silverPricesMu.RUnlock()
+		return cached, nil
+	}
+	app.silverPricesMu.RUnlock()
+
+	fresh, err := fetchSilverPrices(ctx)
+	if err != nil {
+		return silverPricesPayload{}, err
+	}
+	if fresh.BestProduct == nil || fresh.BestProduct.Price <= 0 {
+		app.silverPricesMu.RLock()
+		if !app.silverPricesAt.IsZero() {
+			cached := app.silverPrices
+			app.silverPricesMu.RUnlock()
+			return cached, nil
+		}
+		app.silverPricesMu.RUnlock()
+		return fresh, nil
+	}
+
+	app.silverPricesMu.Lock()
+	app.silverPrices = fresh
+	app.silverPricesAt = fresh.FetchedAt
+	app.silverPricesMu.Unlock()
+
+	return fresh, nil
 }
 
 func (app *application) handleSilverPricesPage(w http.ResponseWriter, r *http.Request) {
@@ -1175,14 +1212,10 @@ func parseSilverProductsFromHTML(htmlSource, source string) ([]silverProduct, er
 			var name string
 			var href string
 			for _, match := range anchorMatches {
-				anchorHTML := blockHTML[match[0]:match[1]]
 				candidateHref := blockHTML[match[2]:match[3]]
 				candidateContent := blockHTML[match[4]:match[5]]
 				candidateName := sanitizeHTMLText(candidateContent)
 				if candidateName == "" {
-					continue
-				}
-				if !looksLike1ozSilverProduct(candidateName, candidateHref, anchorHTML) {
 					continue
 				}
 				name = candidateName
@@ -1256,7 +1289,7 @@ func parseSilverProductsFromHTML(htmlSource, source string) ([]silverProduct, er
 
 func looksLike1ozSilverProduct(name, href, anchorHTML string) bool {
 	text := strings.ToLower(strings.TrimSpace(name + " " + href + " " + anchorHTML))
-	if strings.Contains(text, "/anlegen/silber") || strings.Contains(text, "?fine_weight") || strings.Contains(text, "sort=") || strings.Contains(text, "price%5b") || strings.Contains(text, "/anlegen/silber/") || strings.Contains(text, "junksilver") || strings.Contains(text, "combibar") || strings.Contains(text, "wunschliste") || strings.Contains(text, "warenkorb") || strings.Contains(text, "resale") {
+	if strings.Contains(text, "/anlegen/silber") || strings.Contains(text, "?fine_weight") || strings.Contains(text, "sort=") || strings.Contains(text, "price%5b") || strings.Contains(text, "/anlegen/silber/") {
 		return false
 	}
 	if strings.Contains(text, "silbermünze") || strings.Contains(text, "silbermuenze") {

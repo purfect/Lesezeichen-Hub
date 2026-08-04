@@ -844,6 +844,10 @@ button.danger:hover {
   font-variant-numeric: tabular-nums;
 }
 
+.metal-footer-values a {
+  color: inherit;
+}
+
 .metal-footer-updated,
 .metal-footer-hint {
   margin: 0;
