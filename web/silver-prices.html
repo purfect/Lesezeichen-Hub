@@ -41,6 +41,56 @@
 
     .silver-top { display: grid; gap: 10px; }
 
+    .silver-heading-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .silver-heading-row h2 {
+      margin: 0;
+    }
+
+    .silver-refresh {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 40px;
+      padding: 8px 13px;
+      border: 1px solid rgba(44, 183, 161, 0.42);
+      border-radius: 8px;
+      background: rgba(22, 74, 72, 0.72);
+      color: #dffbf6;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .silver-refresh:hover:not(:disabled) {
+      background: rgba(28, 96, 91, 0.9);
+      border-color: rgba(76, 219, 194, 0.68);
+    }
+
+    .silver-refresh:disabled {
+      cursor: wait;
+      opacity: 0.72;
+    }
+
+    .silver-refresh-icon {
+      display: inline-block;
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+
+    .silver-refresh.is-loading .silver-refresh-icon {
+      animation: silver-refresh-spin 0.8s linear infinite;
+    }
+
+    @keyframes silver-refresh-spin {
+      to { transform: rotate(360deg); }
+    }
+
     .silver-price {
       font-size: clamp(1.6rem, 3vw, 2.4rem);
       font-weight: 800;
@@ -102,6 +152,9 @@
 
     @media (max-width: 700px) {
       .silver-item { flex-direction: column; align-items: flex-start; }
+      .silver-heading-row { align-items: flex-start; }
+      .silver-refresh-label { display: none; }
+      .silver-refresh { width: 40px; padding: 8px; }
     }
   </style>
 </head>
@@ -123,7 +176,13 @@
   <main class="silver-page">
     <section class="silver-card">
       <div class="silver-top">
-        <h2>Aktueller Bestpreis</h2>
+        <div class="silver-heading-row">
+          <h2>Aktueller Bestpreis</h2>
+          <button id="silver-refresh" class="silver-refresh" type="button" title="Preise jetzt neu laden">
+            <span class="silver-refresh-icon" aria-hidden="true">↻</span>
+            <span class="silver-refresh-label">Jetzt aktualisieren</span>
+          </button>
+        </div>
         <div id="silver-best" class="silver-price">wird geladen…</div>
         <div id="silver-best-meta" class="silver-lead"></div>
       </div>
@@ -151,19 +210,29 @@
 
   <script src="/static/metal-prices.js" defer></script>
   <script>
-    async function loadSilverPrices() {
+    async function loadSilverPrices(forceRefresh = false) {
       const best = document.getElementById('silver-best');
       const meta = document.getElementById('silver-best-meta');
       const list = document.getElementById('silver-list');
       const status = document.getElementById('silver-status');
+      const refreshButton = document.getElementById('silver-refresh');
 
-      best.textContent = 'wird geladen…';
-      meta.textContent = '';
-      list.innerHTML = '';
-      status.textContent = 'Lade aktuelle Preise…';
+      refreshButton.disabled = true;
+      refreshButton.classList.add('is-loading');
+      refreshButton.setAttribute('aria-busy', 'true');
+      if (!forceRefresh) {
+        best.textContent = 'wird geladen…';
+        meta.textContent = '';
+        list.innerHTML = '';
+      }
+      status.textContent = forceRefresh ? 'Aktualisiere Preise direkt von der Quelle…' : 'Lade aktuelle Preise…';
 
       try {
-        const response = await fetch('/api/silver-prices');
+        const endpoint = forceRefresh ? '/api/silver-prices?refresh=1' : '/api/silver-prices';
+        const response = await fetch(endpoint, { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`Preisabfrage fehlgeschlagen (${response.status})`);
+        }
         const payload = await response.json();
 
         if (payload.error) {
@@ -204,6 +273,10 @@
         best.textContent = 'Fehler';
         meta.textContent = error.message;
         status.textContent = 'Die Preisabfrage konnte nicht geladen werden.';
+      } finally {
+        refreshButton.disabled = false;
+        refreshButton.classList.remove('is-loading');
+        refreshButton.removeAttribute('aria-busy');
       }
     }
 
@@ -220,6 +293,7 @@
       return escapeHtml(value);
     }
 
+    document.getElementById('silver-refresh').addEventListener('click', () => loadSilverPrices(true));
     loadSilverPrices();
   </script>
 </body>

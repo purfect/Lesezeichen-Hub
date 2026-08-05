@@ -1015,7 +1015,8 @@ func (app *application) handleSilverPrices(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	prices, err := app.getSilverPrices(r.Context())
+	forceRefresh := r.URL.Query().Get("refresh") == "1"
+	prices, err := app.getSilverPrices(r.Context(), forceRefresh)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err)
 		return
@@ -1024,11 +1025,11 @@ func (app *application) handleSilverPrices(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, prices)
 }
 
-func (app *application) getSilverPrices(ctx context.Context) (silverPricesPayload, error) {
+func (app *application) getSilverPrices(ctx context.Context, forceRefresh bool) (silverPricesPayload, error) {
 	const cacheTTL = 2 * time.Hour
 
 	app.silverPricesMu.RLock()
-	if !app.silverPricesAt.IsZero() && time.Since(app.silverPricesAt) < cacheTTL {
+	if !forceRefresh && !app.silverPricesAt.IsZero() && time.Since(app.silverPricesAt) < cacheTTL {
 		cached := app.silverPrices
 		app.silverPricesMu.RUnlock()
 		return cached, nil
