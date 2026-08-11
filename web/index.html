@@ -33,6 +33,9 @@
       <a class="gear-link" href="/static/stats.html" aria-label="Zu den Statistiken" title="Statistiken">
         &#128200;
       </a>
+      <a class="gear-link" href="/static/notes.html" aria-label="Zu den Notizen" title="Notizen">
+        &#128221;
+      </a>
     </div>
   </header>
 
@@ -158,6 +161,7 @@
     <li class="bookmark-item" draggable="true">
       <div>
         <a class="bookmark-link" target="_blank" rel="noreferrer"></a>
+        <span class="note-indicator hidden" aria-label="Notizen vorhanden"></span>
         <p class="bookmark-url"></p>
         <p class="bookmark-notes"></p>
         <p class="bookmark-reminder hidden"></p>
@@ -167,6 +171,7 @@
         <button class="ghost toggle-pin icon-only" type="button" title="Anpinnen" aria-label="Anpinnen">📌</button>
         <button class="ghost toggle-favorite icon-only" type="button" title="Favorit setzen" aria-label="Favorit setzen">★</button>
         <button class="ghost toggle-archive icon-only" type="button" title="Archivieren" aria-label="Archivieren">🗃</button>
+        <button class="ghost add-note icon-only" type="button" title="Notiz anlegen" aria-label="Notiz anlegen">&#128221;</button>
         <button class="ghost edit-bookmark icon-only" type="button" title="Bearbeiten" aria-label="Bearbeiten">⚙</button>
         <button class="danger delete-bookmark icon-only" type="button" aria-label="Lesezeichen loeschen">X</button>
       </div>

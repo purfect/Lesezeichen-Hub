@@ -88,6 +88,17 @@ type bookmark struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
+type note struct {
+	ID          int64      `json:"id"`
+	Title       string     `json:"title"`
+	Content     string     `json:"content"`
+	Type        string     `json:"type"`
+	BookmarkIDs []int64    `json:"bookmark_ids"`
+	Tags        []string   `json:"tags"`
+	CreatedAt   *time.Time `json:"created_at,omitempty"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+}
+
 type apiError struct {
 	Error string `json:"error"`
 }
@@ -162,6 +173,8 @@ func main() {
 	mux.HandleFunc("/api/groups/", app.handleGroupRoutes)
 	mux.HandleFunc("/api/bookmarks", app.handleBookmarks)
 	mux.HandleFunc("/api/bookmarks/", app.handleBookmarkRoutes)
+	mux.HandleFunc("/api/notes", app.handleNotes)
+	mux.HandleFunc("/api/notes/", app.handleNoteRoutes)
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
 	mux.HandleFunc("/api/silver-prices", app.handleSilverPrices)
 	mux.HandleFunc("/silver-preise", app.handleSilverPricesPage)
@@ -211,6 +224,16 @@ func initializeSchema(db *sql.DB) error {
 			FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_bookmarks_group_id ON bookmarks(group_id);`,
+		`CREATE TABLE IF NOT EXISTS notes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			title TEXT NOT NULL,
+			content TEXT NOT NULL DEFAULT '',
+			type TEXT NOT NULL DEFAULT 'note',
+			bookmark_ids TEXT NOT NULL DEFAULT '',
+			tags TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
 	}
 
 	for _, stmt := range statements {
@@ -841,6 +864,7 @@ func (app *application) handleBookmarkRoutes(w http.ResponseWriter, r *http.Requ
 			writeErr(w, http.StatusNotFound, fmt.Errorf("bookmark nicht gefunden"))
 			return
 		}
+		app.removeBookmarkFromNotes(r.Context(), bookmarkID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
 		methodNotAllowed(w)
@@ -1546,6 +1570,282 @@ func methodNotAllowed(w http.ResponseWriter) {
 
 func writeErr(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, apiError{Error: err.Error()})
+}
+
+func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		q := strings.TrimSpace(r.URL.Query().Get("q"))
+		var rows *sql.Rows
+		var err error
+		if q != "" {
+			like := "%" + q + "%"
+			rows, err = app.db.QueryContext(r.Context(),
+				`SELECT id, title, content, type, bookmark_ids, tags, created_at, updated_at
+				 FROM notes WHERE title LIKE ? OR content LIKE ? OR tags LIKE ?
+				 ORDER BY updated_at DESC, id DESC`,
+				like, like, like)
+		} else {
+			rows, err = app.db.QueryContext(r.Context(),
+				`SELECT id, title, content, type, bookmark_ids, tags, created_at, updated_at
+				 FROM notes ORDER BY updated_at DESC, id DESC`)
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer rows.Close()
+
+		items := make([]note, 0)
+		for rows.Next() {
+			var n note
+			var bmRaw, tagsRaw string
+			if err := rows.Scan(&n.ID, &n.Title, &n.Content, &n.Type, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			n.BookmarkIDs = parseBookmarkIDs(bmRaw)
+			n.Tags = parseTags(tagsRaw)
+			items = append(items, n)
+		}
+		if err := rows.Err(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"notes": items})
+
+	case http.MethodPost:
+		var payload struct {
+			Title       string   `json:"title"`
+			Content     string   `json:"content"`
+			Type        string   `json:"type"`
+			BookmarkIDs []int64  `json:"bookmark_ids"`
+			Tags        []string `json:"tags"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
+			return
+		}
+		title := strings.TrimSpace(payload.Title)
+		if title == "" {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("title ist erforderlich"))
+			return
+		}
+		noteType := strings.TrimSpace(payload.Type)
+		if noteType != "note" && noteType != "code" && noteType != "annotation" {
+			noteType = "note"
+		}
+		res, err := app.db.ExecContext(r.Context(),
+			`INSERT INTO notes(title, content, type, bookmark_ids, tags) VALUES(?, ?, ?, ?, ?)`,
+			title,
+			strings.TrimSpace(payload.Content),
+			noteType,
+			serializeBookmarkIDs(payload.BookmarkIDs),
+			serializeTags(payload.Tags),
+		)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		id, _ := res.LastInsertId()
+		writeJSON(w, http.StatusCreated, map[string]any{"id": id})
+
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/notes/"), "/")
+
+	if trimmed == "bookmark-counts" {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		app.handleNoteBookmarkCounts(w, r)
+		return
+	}
+
+	noteID, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || noteID <= 0 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltige note-id"))
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		var n note
+		var bmRaw, tagsRaw string
+		err := app.db.QueryRowContext(r.Context(),
+			`SELECT id, title, content, type, bookmark_ids, tags, created_at, updated_at FROM notes WHERE id = ?`, noteID).
+			Scan(&n.ID, &n.Title, &n.Content, &n.Type, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("notiz nicht gefunden"))
+			return
+		} else if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		n.BookmarkIDs = parseBookmarkIDs(bmRaw)
+		n.Tags = parseTags(tagsRaw)
+		writeJSON(w, http.StatusOK, n)
+
+	case http.MethodPut:
+		var payload struct {
+			Title       string   `json:"title"`
+			Content     string   `json:"content"`
+			Type        string   `json:"type"`
+			BookmarkIDs []int64  `json:"bookmark_ids"`
+			Tags        []string `json:"tags"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
+			return
+		}
+		title := strings.TrimSpace(payload.Title)
+		if title == "" {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("title ist erforderlich"))
+			return
+		}
+		noteType := strings.TrimSpace(payload.Type)
+		if noteType != "note" && noteType != "code" && noteType != "annotation" {
+			noteType = "note"
+		}
+		res, err := app.db.ExecContext(r.Context(),
+			`UPDATE notes SET title = ?, content = ?, type = ?, bookmark_ids = ?, tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			title,
+			strings.TrimSpace(payload.Content),
+			noteType,
+			serializeBookmarkIDs(payload.BookmarkIDs),
+			serializeTags(payload.Tags),
+			noteID,
+		)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("notiz nicht gefunden"))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+
+	case http.MethodDelete:
+		res, err := app.db.ExecContext(r.Context(), `DELETE FROM notes WHERE id = ?`, noteID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("notiz nicht gefunden"))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (app *application) handleNoteBookmarkCounts(w http.ResponseWriter, r *http.Request) {
+	rows, err := app.db.QueryContext(r.Context(), `SELECT bookmark_ids FROM notes WHERE bookmark_ids != ''`)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			continue
+		}
+		for _, id := range parseBookmarkIDs(raw) {
+			counts[strconv.FormatInt(id, 10)]++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"counts": counts})
+}
+
+func (app *application) removeBookmarkFromNotes(ctx context.Context, bookmarkID int64) {
+	idStr := strconv.FormatInt(bookmarkID, 10)
+	rows, err := app.db.QueryContext(ctx,
+		`SELECT id, bookmark_ids FROM notes WHERE bookmark_ids LIKE ?`,
+		"%"+idStr+"%")
+	if err != nil {
+		log.Printf("removeBookmarkFromNotes: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	type noteUpdate struct {
+		id  int64
+		ids string
+	}
+	var updates []noteUpdate
+	for rows.Next() {
+		var nid int64
+		var raw string
+		if err := rows.Scan(&nid, &raw); err != nil {
+			continue
+		}
+		filtered := make([]int64, 0)
+		for _, id := range parseBookmarkIDs(raw) {
+			if id != bookmarkID {
+				filtered = append(filtered, id)
+			}
+		}
+		updates = append(updates, noteUpdate{id: nid, ids: serializeBookmarkIDs(filtered)})
+	}
+	rows.Close()
+	for _, u := range updates {
+		if _, err := app.db.ExecContext(ctx, `UPDATE notes SET bookmark_ids = ? WHERE id = ?`, u.ids, u.id); err != nil {
+			log.Printf("removeBookmarkFromNotes update %d: %v", u.id, err)
+		}
+	}
+}
+
+func serializeBookmarkIDs(ids []int64) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ids))
+	seen := make(map[int64]struct{})
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(parts, ",")
+}
+
+func parseBookmarkIDs(raw string) []int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []int64{}
+	}
+	parts := strings.Split(raw, ",")
+	ids := make([]int64, 0, len(parts))
+	for _, p := range parts {
+		id, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64)
+		if err == nil && id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

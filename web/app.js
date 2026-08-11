@@ -1,5 +1,6 @@
 const state = {
   groups: [],
+  noteCounts: {},
   search: "",
   includeArchivedInSearch: false,
   collapsedGroupIds: loadCollapsedGroupIds(),
@@ -409,8 +410,12 @@ function parseNumberish(raw, fallback = 0) {
 async function loadState(showHint = false) {
   try {
     if (showHint) setStatus("Lade Daten neu...");
-    const payload = await request("/api/state");
+    const [payload, countPayload] = await Promise.all([
+      request("/api/state"),
+      request("/api/notes/bookmark-counts"),
+    ]);
     state.groups = payload.groups ?? [];
+    state.noteCounts = countPayload.counts || {};
     populateGroupSelect();
     render();
     setStatus(showHint ? "Aktualisiert." : "Bereit.");
@@ -587,6 +592,18 @@ function render() {
       favBtn.addEventListener("click", () => onToggleBookmarkFavorite(bookmark));
       archiveBtn.addEventListener("click", () => onToggleBookmarkArchived(bookmark));
       item.classList.toggle("is-archived", Boolean(bookmark.archived));
+
+      item.querySelector(".add-note").addEventListener("click", () => {
+        const params = new URLSearchParams({ bookmark_id: bookmark.id, bookmark_title: bookmark.title });
+        location.href = `/static/notes.html?${params}`;
+      });
+
+      const noteIndicator = item.querySelector(".note-indicator");
+      const noteCount = state.noteCounts[String(bookmark.id)] || 0;
+      if (noteCount > 0) {
+        noteIndicator.classList.remove("hidden");
+        noteIndicator.title = `${noteCount} Notiz${noteCount !== 1 ? "en" : ""} vorhanden`;
+      }
 
       item.querySelector(".edit-bookmark").addEventListener("click", () => onEditBookmark(bookmark));
       item.querySelector(".delete-bookmark").addEventListener("click", () => onDeleteBookmark(bookmark));

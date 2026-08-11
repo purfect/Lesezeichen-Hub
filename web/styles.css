@@ -529,6 +529,21 @@ button.danger:hover {
   text-decoration: underline;
 }
 
+.note-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2ecc71;
+  vertical-align: middle;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.note-indicator.hidden {
+  display: none;
+}
+
 .bookmark-url,
 .bookmark-notes {
   margin: 4px 0 0;
