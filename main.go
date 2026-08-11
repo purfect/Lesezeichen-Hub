@@ -864,7 +864,6 @@ func (app *application) handleBookmarkRoutes(w http.ResponseWriter, r *http.Requ
 			writeErr(w, http.StatusNotFound, fmt.Errorf("bookmark nicht gefunden"))
 			return
 		}
-		app.removeBookmarkFromNotes(r.Context(), bookmarkID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
 		methodNotAllowed(w)
@@ -1667,6 +1666,15 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if trimmed == "stats" {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		app.handleNoteStats(w, r)
+		return
+	}
+
 	noteID, err := strconv.ParseInt(trimmed, 10, 64)
 	if err != nil || noteID <= 0 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltige note-id"))
@@ -1748,6 +1756,75 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+func (app *application) handleNoteStats(w http.ResponseWriter, r *http.Request) {
+	rows, err := app.db.QueryContext(r.Context(), `SELECT type, COUNT(*) FROM notes GROUP BY type`)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer rows.Close()
+
+	typeCounts := make(map[string]int64)
+	var totalNotes int64
+	for rows.Next() {
+		var typ string
+		var count int64
+		if err := rows.Scan(&typ, &count); err != nil {
+			continue
+		}
+		typeCounts[typ] = count
+		totalNotes += count
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	tagRows, err := app.db.QueryContext(r.Context(), `SELECT tags FROM notes WHERE tags != ''`)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tagRows.Close()
+
+	tagCounts := make(map[string]int)
+	for tagRows.Next() {
+		var raw string
+		if err := tagRows.Scan(&raw); err != nil {
+			continue
+		}
+		for _, t := range parseTags(raw) {
+			tagCounts[t]++
+		}
+	}
+	if err := tagRows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	type tagCount struct {
+		Tag   string `json:"tag"`
+		Count int    `json:"count"`
+	}
+	tags := make([]tagCount, 0, len(tagCounts))
+	for tag, count := range tagCounts {
+		tags = append(tags, tagCount{tag, count})
+	}
+	sort.Slice(tags, func(i, j int) bool {
+		return tags[i].Count > tags[j].Count
+	})
+
+	if len(tags) > 20 {
+		tags = tags[:20]
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total_notes": totalNotes,
+		"type_counts": typeCounts,
+		"top_tags":    tags,
+	})
 }
 
 func (app *application) handleNoteBookmarkCounts(w http.ResponseWriter, r *http.Request) {

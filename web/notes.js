@@ -31,6 +31,7 @@ async function init() {
     ]);
     allNotes     = notesRes.notes || [];
     allBookmarks = (stateRes.groups || []).flatMap(g => g.bookmarks || []);
+    updateTitleCounter();
     renderList(allNotes);
     setStatus("");
 
@@ -54,9 +55,11 @@ function renderList(notes) {
     els.notesList.innerHTML = '<p class="notes-empty">Keine Notizen gefunden.</p>';
     return;
   }
+  const bookmarkIdSet = new Set(allBookmarks.map(b => b.id));
   for (const n of notes) {
     const item = document.createElement("div");
-    item.className = "note-item" + (n.id === activeNoteId ? " active" : "");
+    const hasOrphan = (n.bookmark_ids || []).some(id => !bookmarkIdSet.has(id));
+    item.className = "note-item" + (n.id === activeNoteId ? " active" : "") + (hasOrphan ? " has-orphan" : "");
     item.dataset.id = n.id;
 
     const preview = (n.content || "").replace(/\n/g, " ").slice(0, 80);
@@ -93,9 +96,11 @@ function renderNoteView(note) {
   els.detailHead.classList.remove("hidden");
   els.detailTitleLabel.textContent = note.title;
 
+  const bookmarkIdSet = new Set(allBookmarks.map(b => b.id));
   const linkedBookmarks = allBookmarks.filter(b =>
     (note.bookmark_ids || []).includes(b.id)
   );
+  const orphanedIds = (note.bookmark_ids || []).filter(id => !bookmarkIdSet.has(id));
 
   let contentHtml;
   if (note.type === "code") {
@@ -108,19 +113,26 @@ function renderNoteView(note) {
     ? `<div class="note-view-tags">${note.tags.map(t => `<span class="note-tag">${esc(t)}</span>`).join("")}</div>`
     : "";
 
-  const bookmarksHtml = linkedBookmarks.length > 0
-    ? `<div class="note-view-bookmarks">
-         <h4>Verknuepfte Lesezeichen</h4>
-         <div class="linked-bookmark-list">
-           ${linkedBookmarks.map(b => `
-             <a class="linked-bookmark" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer">
-               <span class="linked-bookmark-title">${esc(b.title)}</span>
-               <span class="linked-bookmark-url">${esc(b.url)}</span>
-             </a>
-           `).join("")}
-         </div>
-       </div>`
-    : "";
+  let bookmarksHtml = "";
+  if (linkedBookmarks.length > 0 || orphanedIds.length > 0) {
+    bookmarksHtml = `<div class="note-view-bookmarks">
+      <h4>Verknuepfte Lesezeichen</h4>
+      <div class="linked-bookmark-list">
+        ${linkedBookmarks.map(b => `
+          <a class="linked-bookmark" href="${esc(b.url)}" target="_blank" rel="noopener noreferrer">
+            <span class="linked-bookmark-title">${esc(b.title)}</span>
+            <span class="linked-bookmark-url">${esc(b.url)}</span>
+          </a>
+        `).join("")}
+        ${orphanedIds.map(id => `
+          <span class="linked-bookmark orphaned" title="Lesezeichen #${id} wurde geloescht">
+            <span class="orphaned-indicator">🔴</span>
+            <span class="linked-bookmark-title">Lesezeichen #${id} (geloescht)</span>
+          </span>
+        `).join("")}
+      </div>
+    </div>`;
+  }
 
   const metaHtml = `
     <div class="note-meta-row">
@@ -288,6 +300,7 @@ els.notesSearch.addEventListener("input", () => {
 async function reloadNotes() {
   const res = await request("/api/notes");
   allNotes = res.notes || [];
+  updateTitleCounter();
   const q = els.notesSearch.value.trim().toLowerCase();
   if (q) {
     const filtered = allNotes.filter(n =>
@@ -299,6 +312,11 @@ async function reloadNotes() {
   } else {
     renderList(allNotes);
   }
+}
+
+function updateTitleCounter() {
+  const el = document.getElementById("notes-title-count");
+  if (el) el.textContent = `(${allNotes.length})`;
 }
 
 function typeLabel(type) {

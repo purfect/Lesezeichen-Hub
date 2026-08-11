@@ -5,6 +5,9 @@ const els = {
   groupsSummary: document.getElementById("groups-summary"),
   groupsChart: document.getElementById("groups-chart"),
   topTags: document.getElementById("top-tags"),
+  topNoteTags: document.getElementById("top-note-tags"),
+  notesSummary: document.getElementById("notes-summary"),
+  noteTypes: document.getElementById("note-types"),
   allSearches: document.getElementById("all-searches"),
   status: document.getElementById("status"),
 };
@@ -15,12 +18,17 @@ async function init() {
   try {
     setStatus("Lade Statistiken...");
 
-    const [payload] = await Promise.all([request("/api/state")]);
+    const [payload, noteStatsPayload] = await Promise.all([
+      request("/api/state"),
+      request("/api/notes/stats"),
+    ]);
     const groups = payload.groups || [];
+    const noteStats = noteStatsPayload || {};
 
     renderSearchHistory();
     renderGroupsChart(groups);
     renderTopTags(groups);
+    renderNoteStats(noteStats);
 
     els.clearHistory.addEventListener("click", () => {
       if (!confirm("Suchverlauf wirklich loeschen?")) return;
@@ -108,6 +116,46 @@ function renderGroupsChart(groups) {
     const pct = Math.round((item.total / max) * 100);
     els.groupsChart.appendChild(buildBarRow(escapeHTML(item.name), item.total, pct, "bar-group",
       item.archived > 0 ? ` <small style="color:var(--muted)">(${item.active} aktiv / ${item.archived} archiviert)</small>` : ""));
+  }
+}
+
+// ─── Notiz-Statistiken ──────────────────────────────────────────────────────
+
+function renderNoteStats(noteStats) {
+  const total = noteStats.total_notes || 0;
+  const types = noteStats.type_counts || {};
+  const topTags = noteStats.top_tags || [];
+
+  els.notesSummary.textContent = `Insgesamt ${total} Notiz${total !== 1 ? "en" : ""}.`;
+
+  els.noteTypes.innerHTML = "";
+  const typeLabels = { note: "Notiz", code: "Code-Schnipsel", annotation: "Anmerkung" };
+  const typeOrder = ["note", "code", "annotation"];
+  for (const type of typeOrder) {
+    const count = types[type] || 0;
+    if (count > 0) {
+      const li = document.createElement("li");
+      li.textContent = `${typeLabels[type] || type}: ${count}`;
+      els.noteTypes.appendChild(li);
+    }
+  }
+  if (els.noteTypes.innerHTML === "") {
+    const li = document.createElement("li");
+    li.textContent = "Keine Notizen vorhanden.";
+    els.noteTypes.appendChild(li);
+  }
+
+  els.topNoteTags.innerHTML = "";
+  if (topTags.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = "Keine Tags vorhanden.";
+    els.topNoteTags.appendChild(li);
+  } else {
+    for (const item of topTags) {
+      const li = document.createElement("li");
+      li.textContent = `${item.tag}: ${item.count}`;
+      els.topNoteTags.appendChild(li);
+    }
   }
 }
 

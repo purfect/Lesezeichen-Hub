@@ -85,6 +85,7 @@
 
     .note-item:hover { background: rgba(44, 183, 161, 0.07); }
     .note-item.active { background: rgba(44, 183, 161, 0.14); border-left: 3px solid var(--accent); }
+    .note-item.has-orphan { border-left: 3px solid var(--danger); }
 
     .note-item-title {
       font-size: 0.9rem;
@@ -281,6 +282,17 @@
       max-width: 200px;
     }
 
+    .linked-bookmark.orphaned {
+      border-color: rgba(199, 79, 87, 0.4);
+      color: var(--danger);
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .orphaned-indicator {
+      margin-right: 6px;
+    }
+
     /* ── Editor form ── */
     .note-editor {
       display: flex;
@@ -400,7 +412,7 @@
   <header class="topbar">
     <div>
       <p class="eyebrow">Persoenlicher Browser Hub</p>
-      <h1>Notizen</h1>
+      <h1>Notizen <span id="notes-title-count" style="font-size:0.7em;color:var(--muted);font-weight:400;margin-left:8px"></span></h1>
       <p class="search-info">Codeschnipsel, Anmerkungen und Notizen zu Lesezeichen.</p>
     </div>
     <div class="topbar-actions">
