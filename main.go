@@ -135,6 +135,42 @@ type speedDialDial struct {
 	URL   string `json:"url"`
 }
 
+type backupPayload struct {
+	Version    int           `json:"version"`
+	ExportedAt time.Time     `json:"exported_at"`
+	Groups     []backupGroup `json:"groups"`
+	Notes      []backupNote  `json:"notes"`
+}
+
+type backupGroup struct {
+	ID          int64            `json:"id"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	SortOrder   int              `json:"sort_order"`
+	Bookmarks   []backupBookmark `json:"bookmarks"`
+}
+
+type backupBookmark struct {
+	ID        int64      `json:"id"`
+	Title     string     `json:"title"`
+	URL       string     `json:"url"`
+	Notes     string     `json:"notes"`
+	Tags      []string   `json:"tags"`
+	Favorite  bool       `json:"favorite"`
+	Pinned    bool       `json:"pinned"`
+	Archived  bool       `json:"archived"`
+	SortOrder int        `json:"sort_order"`
+	RemindAt  *time.Time `json:"remind_at,omitempty"`
+}
+
+type backupNote struct {
+	Title       string   `json:"title"`
+	Content     string   `json:"content"`
+	Type        string   `json:"type"`
+	BookmarkIDs []int64  `json:"bookmark_ids"`
+	Tags        []string `json:"tags"`
+}
+
 //go:embed web/*
 var embeddedWebFiles embed.FS
 
@@ -169,6 +205,8 @@ func main() {
 	mux.HandleFunc("/api/state", app.handleState)
 	mux.HandleFunc("/api/export", app.handleExport)
 	mux.HandleFunc("/api/import", app.handleImport)
+	mux.HandleFunc("/api/backup", app.handleBackup)
+	mux.HandleFunc("/api/restore", app.handleRestore)
 	mux.HandleFunc("/api/groups", app.handleGroups)
 	mux.HandleFunc("/api/groups/", app.handleGroupRoutes)
 	mux.HandleFunc("/api/bookmarks", app.handleBookmarks)
@@ -550,6 +588,258 @@ func (app *application) handleImport(w http.ResponseWriter, r *http.Request) {
 		"created_groups":    createdGroups,
 		"created_bookmarks": createdBookmarks,
 		"updated_bookmarks": updatedBookmarks,
+	})
+}
+
+func (app *application) handleBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+
+	groups, err := app.fetchState(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	bkGroups := make([]backupGroup, 0, len(groups))
+	for _, g := range groups {
+		bg := backupGroup{
+			ID:          g.ID,
+			Name:        g.Name,
+			Description: g.Description,
+			SortOrder:   g.SortOrder,
+			Bookmarks:   make([]backupBookmark, 0, len(g.Bookmarks)),
+		}
+		for _, b := range g.Bookmarks {
+			bg.Bookmarks = append(bg.Bookmarks, backupBookmark{
+				ID:        b.ID,
+				Title:     b.Title,
+				URL:       b.URL,
+				Notes:     b.Notes,
+				Tags:      b.Tags,
+				Favorite:  b.Favorite,
+				Pinned:    b.Pinned,
+				Archived:  b.Archived,
+				SortOrder: b.SortOrder,
+				RemindAt:  b.RemindAt,
+			})
+		}
+		bkGroups = append(bkGroups, bg)
+	}
+
+	rows, err := app.db.QueryContext(r.Context(),
+		`SELECT title, content, type, bookmark_ids, tags FROM notes ORDER BY id ASC`)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer rows.Close()
+
+	bkNotes := make([]backupNote, 0)
+	for rows.Next() {
+		var n backupNote
+		var bmRaw, tagsRaw string
+		if err := rows.Scan(&n.Title, &n.Content, &n.Type, &bmRaw, &tagsRaw); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if n.Type == "vault" && !strings.HasPrefix(n.Content, "vault:v1:") {
+			n.Content = ""
+		}
+		n.BookmarkIDs = parseBookmarkIDs(bmRaw)
+		n.Tags = parseTags(tagsRaw)
+		bkNotes = append(bkNotes, n)
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	payload := backupPayload{
+		Version:    1,
+		ExportedAt: time.Now(),
+		Groups:     bkGroups,
+		Notes:      bkNotes,
+	}
+
+	stamp := time.Now().Format("20060102-150405")
+	filename := fmt.Sprintf("lesezeichen-vollsicherung-%s.json", stamp)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("encode backup: %v", err)
+	}
+}
+
+func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+
+	limitedBody := io.LimitReader(r.Body, 20*1024*1024)
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(limitedBody)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("request body konnte nicht gelesen werden"))
+		return
+	}
+
+	var payload backupPayload
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
+		return
+	}
+	if payload.Version != 1 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("unbekannte backup-version: %d", payload.Version))
+		return
+	}
+
+	tx, err := app.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	rollback := true
+	defer func() {
+		if rollback {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// old bookmark ID → new bookmark ID (for remapping note links)
+	bookmarkIDMap := make(map[int64]int64)
+	createdGroups, createdBookmarks, updatedBookmarks, createdNotes, updatedNotes := 0, 0, 0, 0, 0
+
+	for _, g := range payload.Groups {
+		name := strings.TrimSpace(g.Name)
+		if name == "" {
+			continue
+		}
+
+		var groupID int64
+		err := tx.QueryRowContext(r.Context(),
+			`SELECT id FROM groups WHERE lower(name) = lower(?) LIMIT 1`, name).Scan(&groupID)
+		if errors.Is(err, sql.ErrNoRows) {
+			res, err := tx.ExecContext(r.Context(),
+				`INSERT INTO groups(name, description, sort_order) VALUES(?, ?, ?)`,
+				name, strings.TrimSpace(g.Description), g.SortOrder)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			groupID, _ = res.LastInsertId()
+			createdGroups++
+		} else if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		} else {
+			_, _ = tx.ExecContext(r.Context(),
+				`UPDATE groups SET description = ?, sort_order = ? WHERE id = ?`,
+				strings.TrimSpace(g.Description), g.SortOrder, groupID)
+		}
+
+		for _, b := range g.Bookmarks {
+			title := strings.TrimSpace(b.Title)
+			urlValue := strings.TrimSpace(b.URL)
+			if title == "" || urlValue == "" {
+				continue
+			}
+			tagsRaw := serializeTags(b.Tags)
+
+			var newID int64
+			err := tx.QueryRowContext(r.Context(),
+				`SELECT id FROM bookmarks WHERE group_id = ? AND url = ? LIMIT 1`,
+				groupID, urlValue).Scan(&newID)
+			if errors.Is(err, sql.ErrNoRows) {
+				res, err := tx.ExecContext(r.Context(),
+					`INSERT INTO bookmarks(group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					groupID, title, urlValue, b.Notes, tagsRaw,
+					boolToInt(b.Favorite), boolToInt(b.Pinned), boolToInt(b.Archived),
+					b.SortOrder, b.RemindAt)
+				if err != nil {
+					writeErr(w, http.StatusInternalServerError, err)
+					return
+				}
+				newID, _ = res.LastInsertId()
+				createdBookmarks++
+			} else if err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			} else {
+				_, _ = tx.ExecContext(r.Context(),
+					`UPDATE bookmarks SET title = ?, notes = ?, tags = ?, favorite = ?, pinned = ?, archived = ?, sort_order = ?, remind_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+					title, b.Notes, tagsRaw,
+					boolToInt(b.Favorite), boolToInt(b.Pinned), boolToInt(b.Archived),
+					b.SortOrder, b.RemindAt, newID)
+				updatedBookmarks++
+			}
+
+			if b.ID > 0 {
+				bookmarkIDMap[b.ID] = newID
+			}
+		}
+	}
+
+	for _, n := range payload.Notes {
+		title := strings.TrimSpace(n.Title)
+		if title == "" {
+			continue
+		}
+		noteType := n.Type
+		if noteType != "note" && noteType != "code" && noteType != "annotation" && noteType != "vault" {
+			noteType = "note"
+		}
+
+		// Remap old bookmark IDs → new IDs; drop any that no longer exist
+		remapped := make([]int64, 0, len(n.BookmarkIDs))
+		for _, oldID := range n.BookmarkIDs {
+			if newID, ok := bookmarkIDMap[oldID]; ok {
+				remapped = append(remapped, newID)
+			}
+		}
+
+		bmRaw := serializeBookmarkIDs(remapped)
+		tagsRaw := serializeTags(n.Tags)
+
+		var existingID int64
+		err := tx.QueryRowContext(r.Context(),
+			`SELECT id FROM notes WHERE title = ? LIMIT 1`, title).Scan(&existingID)
+		if errors.Is(err, sql.ErrNoRows) {
+			_, err = tx.ExecContext(r.Context(),
+				`INSERT INTO notes(title, content, type, bookmark_ids, tags) VALUES(?, ?, ?, ?, ?)`,
+				title, strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			createdNotes++
+		} else if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		} else {
+			_, _ = tx.ExecContext(r.Context(),
+				`UPDATE notes SET content = ?, type = ?, bookmark_ids = ?, tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw, existingID)
+			updatedNotes++
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	rollback = false
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                true,
+		"created_groups":    createdGroups,
+		"created_bookmarks": createdBookmarks,
+		"updated_bookmarks": updatedBookmarks,
+		"created_notes":     createdNotes,
+		"updated_notes":     updatedNotes,
 	})
 }
 
@@ -1631,7 +1921,7 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		noteType := strings.TrimSpace(payload.Type)
-		if noteType != "note" && noteType != "code" && noteType != "annotation" {
+		if noteType != "note" && noteType != "code" && noteType != "annotation" && noteType != "vault" {
 			noteType = "note"
 		}
 		res, err := app.db.ExecContext(r.Context(),
@@ -1717,7 +2007,7 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		noteType := strings.TrimSpace(payload.Type)
-		if noteType != "note" && noteType != "code" && noteType != "annotation" {
+		if noteType != "note" && noteType != "code" && noteType != "annotation" && noteType != "vault" {
 			noteType = "note"
 		}
 		res, err := app.db.ExecContext(r.Context(),

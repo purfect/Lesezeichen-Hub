@@ -125,6 +125,16 @@
     .type-note    { background: rgba(44, 183, 161, 0.18); color: #2cb7a1; }
     .type-code    { background: rgba(99, 140, 240, 0.18); color: #7ba4f7; }
     .type-annotation { background: rgba(240, 180, 60, 0.18); color: #e8b84b; }
+    .type-vault   { background: rgba(199, 79, 87, 0.2); color: #ff8b93; }
+
+    .notes-section-title {
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 10px 14px 6px;
+      border-top: 1px solid rgba(147, 170, 201, 0.1);
+    }
 
     .note-item-date {
       font-size: 0.68rem;
@@ -378,6 +388,36 @@
     .btn-cancel:hover, .btn-edit:hover { border-color: var(--accent); color: var(--accent); }
     .btn-delete { color: var(--danger); border-color: transparent; }
     .btn-delete:hover { border-color: var(--danger); }
+    .btn-copy:hover { border-color: #7ba4f7; color: #7ba4f7; }
+
+    .vault-panel {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      background: rgba(16, 26, 40, 0.65);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .vault-input {
+      flex: 1;
+      min-width: 180px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: var(--ink);
+      background: rgba(17, 29, 45, 0.8);
+      outline: none;
+      font-size: 0.86rem;
+    }
+
+    .vault-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--ring);
+    }
 
     .note-meta-row {
       display: flex;
@@ -426,6 +466,7 @@
       <div class="notes-sidebar-head">
         <div class="notes-search-wrap">
           <input id="notes-search" class="notes-search" type="search" placeholder="Suche in Notizen..." autocomplete="off" />
+          <button id="notes-search-clear" class="search-clear hidden" type="button" aria-label="Suche leeren">X</button>
         </div>
         <button id="btn-new-note" class="btn-new-note" type="button">+ Neue Notiz</button>
       </div>
@@ -439,6 +480,7 @@
       <div id="detail-head" class="notes-detail-head hidden">
         <span id="detail-title-label" class="notes-detail-title"></span>
         <div class="notes-detail-actions">
+          <button id="btn-copy" class="btn-copy btn-edit" type="button">Kopieren</button>
           <button id="btn-edit" class="btn-edit" type="button">Bearbeiten</button>
           <button id="btn-delete" class="btn-delete" type="button">Loeschen</button>
         </div>

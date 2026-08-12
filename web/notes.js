@@ -5,14 +5,17 @@ let activeNoteId = null;
 let isEditing = false;
 let searchDebounce = null;
 let pendingBookmarkIds = []; // set when arriving from main page via URL param
+const decryptedVaultCache = new Map();
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 const els = {
   notesList:       document.getElementById("notes-list"),
   notesSearch:     document.getElementById("notes-search"),
+  notesSearchClear:document.getElementById("notes-search-clear"),
   btnNewNote:      document.getElementById("btn-new-note"),
   detailHead:      document.getElementById("detail-head"),
   detailTitleLabel:document.getElementById("detail-title-label"),
+  btnCopy:         document.getElementById("btn-copy"),
   btnEdit:         document.getElementById("btn-edit"),
   btnDelete:       document.getElementById("btn-delete"),
   detailBody:      document.getElementById("notes-detail-body"),
@@ -56,13 +59,41 @@ function renderList(notes) {
     return;
   }
   const bookmarkIdSet = new Set(allBookmarks.map(b => b.id));
-  for (const n of notes) {
+
+  const regularNotes = notes.filter(n => n.type !== "vault");
+  const vaultNotes = notes.filter(n => n.type === "vault");
+
+  if (regularNotes.length > 0) {
+    appendSectionTitle("Notizen");
+    for (const n of regularNotes) {
+      appendNoteItem(n, bookmarkIdSet);
+    }
+  }
+
+  if (vaultNotes.length > 0) {
+    appendSectionTitle("Vault");
+    for (const n of vaultNotes) {
+      appendNoteItem(n, bookmarkIdSet);
+    }
+  }
+}
+
+function appendSectionTitle(title) {
+  const header = document.createElement("div");
+  header.className = "notes-section-title";
+  header.textContent = title;
+  els.notesList.appendChild(header);
+}
+
+function appendNoteItem(n, bookmarkIdSet) {
     const item = document.createElement("div");
     const hasOrphan = (n.bookmark_ids || []).some(id => !bookmarkIdSet.has(id));
     item.className = "note-item" + (n.id === activeNoteId ? " active" : "") + (hasOrphan ? " has-orphan" : "");
     item.dataset.id = n.id;
 
-    const preview = (n.content || "").replace(/\n/g, " ").slice(0, 80);
+    const preview = n.type === "vault"
+      ? "🔒 Verschluesselte Vault-Notiz"
+      : (n.content || "").replace(/\n/g, " ").slice(0, 80);
 
     item.innerHTML = `
       <div class="note-item-title">${esc(n.title)}</div>
@@ -74,7 +105,6 @@ function renderList(notes) {
     `;
     item.addEventListener("click", () => selectNote(n.id));
     els.notesList.appendChild(item);
-  }
 }
 
 // ── Select / view a note ──────────────────────────────────────────────────
@@ -103,7 +133,12 @@ function renderNoteView(note) {
   const orphanedIds = (note.bookmark_ids || []).filter(id => !bookmarkIdSet.has(id));
 
   let contentHtml;
-  if (note.type === "code") {
+  if (note.type === "vault") {
+    const unlocked = decryptedVaultCache.get(note.id);
+    contentHtml = unlocked
+      ? `<pre class="note-view-content is-code">${esc(unlocked)}</pre>`
+      : `<div class="note-view-content">🔒 Diese Vault-Notiz ist verschluesselt. Zum Anzeigen bitte entsperren.</div>`;
+  } else if (note.type === "code") {
     contentHtml = `<pre class="note-view-content is-code">${esc(note.content)}</pre>`;
   } else {
     contentHtml = `<div class="note-view-content">${esc(note.content)}</div>`;
@@ -142,7 +177,34 @@ function renderNoteView(note) {
     </div>
   `;
 
-  els.detailBody.innerHTML = metaHtml + contentHtml + tagsHtml + bookmarksHtml;
+  const vaultHtml = note.type === "vault"
+    ? `<div class="vault-panel">
+        <input id="vault-password" class="vault-input" type="password" placeholder="Vault-Passwort" autocomplete="off" />
+        <button id="btn-vault-unlock" class="btn-edit" type="button">Entsperren</button>
+      </div>`
+    : "";
+
+  els.detailBody.innerHTML = metaHtml + vaultHtml + contentHtml + tagsHtml + bookmarksHtml;
+
+  if (note.type === "vault") {
+    const unlockBtn = document.getElementById("btn-vault-unlock");
+    const passInput = document.getElementById("vault-password");
+    unlockBtn?.addEventListener("click", async () => {
+      const pw = passInput?.value || "";
+      if (!pw) {
+        setStatus("Bitte Passwort eingeben.", true);
+        return;
+      }
+      try {
+        const plain = await decryptVaultContent(note.content, pw);
+        decryptedVaultCache.set(note.id, plain);
+        setStatus("Vault entsperrt.");
+        renderNoteView(note);
+      } catch {
+        setStatus("Passwort falsch oder Vault-Inhalt ungueltig.", true);
+      }
+    });
+  }
 }
 
 // ── Editor ────────────────────────────────────────────────────────────────
@@ -168,11 +230,16 @@ function openEditor(note, prefillTitle = "") {
           <option value="note"        ${type === "note"        ? "selected" : ""}>&#128221; Notiz</option>
           <option value="code"        ${type === "code"        ? "selected" : ""}>&#128187; Code-Schnipsel</option>
           <option value="annotation"  ${type === "annotation"  ? "selected" : ""}>&#128204; Anmerkung</option>
+          <option value="vault"       ${type === "vault"       ? "selected" : ""}>🔒 Vault</option>
         </select>
       </label>
       <label>
         Inhalt
         <textarea id="editor-content" class="${type === "code" ? "is-code" : ""}" placeholder="Inhalt der Notiz…">${esc(content)}</textarea>
+      </label>
+      <label id="vault-password-wrap" class="${type === "vault" ? "" : "hidden"}">
+        Vault-Passwort
+        <input id="editor-vault-password" type="password" placeholder="Passwort fuer Verschluesselung" autocomplete="new-password" />
       </label>
       <label>
         Tags <span style="font-weight:400;text-transform:none;letter-spacing:0">(kommagetrennt)</span>
@@ -187,8 +254,10 @@ function openEditor(note, prefillTitle = "") {
 
   const typeSelect  = document.getElementById("editor-type");
   const contentArea = document.getElementById("editor-content");
+  const vaultWrap   = document.getElementById("vault-password-wrap");
   typeSelect.addEventListener("change", () => {
     contentArea.classList.toggle("is-code", typeSelect.value === "code");
+    vaultWrap.classList.toggle("hidden", typeSelect.value !== "vault");
   });
 
   document.getElementById("btn-cancel-edit").addEventListener("click", () => {
@@ -210,9 +279,23 @@ function openEditor(note, prefillTitle = "") {
 async function saveNote(existingId, existingBookmarkIds) {
   const title   = document.getElementById("editor-title").value.trim();
   const type    = document.getElementById("editor-type").value;
-  const content = document.getElementById("editor-content").value;
+  let content   = document.getElementById("editor-content").value;
   const tagsRaw = document.getElementById("editor-tags").value;
   const tags    = tagsRaw.split(",").map(t => t.trim()).filter(Boolean);
+
+  if (type === "vault") {
+    const password = document.getElementById("editor-vault-password")?.value || "";
+    if (!password) {
+      setStatus("Fuer Vault-Notizen ist ein Passwort erforderlich.", true);
+      return;
+    }
+    try {
+      content = await encryptVaultContent(content, password);
+    } catch {
+      setStatus("Vault-Inhalt konnte nicht verschluesselt werden.", true);
+      return;
+    }
+  }
 
   // New note: use bookmark from URL param; existing note: preserve its links
   const bookmarkIds = existingId ? (existingBookmarkIds || []) : pendingBookmarkIds;
@@ -272,14 +355,52 @@ els.btnNewNote.addEventListener("click", () => {
 
 els.btnEdit.addEventListener("click", () => {
   const note = allNotes.find(n => n.id === activeNoteId);
-  if (note) openEditor(note);
+  if (!note) return;
+  if (note.type !== "vault") {
+    openEditor(note);
+    return;
+  }
+
+  const pw = prompt("Vault-Passwort zum Bearbeiten:");
+  if (!pw) return;
+  decryptVaultContent(note.content, pw)
+    .then((plain) => {
+      openEditor({ ...note, content: plain });
+      setStatus("Vault entsperrt. Beim Speichern wird neu verschluesselt.");
+    })
+    .catch(() => {
+      setStatus("Passwort falsch oder Vault-Inhalt ungueltig.", true);
+    });
 });
 
 els.btnDelete.addEventListener("click", () => {
   if (activeNoteId) deleteNote(activeNoteId);
 });
 
+els.btnCopy.addEventListener("click", async () => {
+  const note = allNotes.find(n => n.id === activeNoteId);
+  if (!note) return;
+
+  let textToCopy = note.content || "";
+  if (note.type === "vault") {
+    textToCopy = decryptedVaultCache.get(note.id) || "";
+    if (!textToCopy) {
+      setStatus("Vault zuerst entsperren, dann kopieren.", true);
+      return;
+    }
+  }
+
+  try {
+    await navigator.clipboard.writeText(textToCopy);
+    setStatus("Inhalt in Zwischenablage kopiert.");
+    setTimeout(() => setStatus(""), 1600);
+  } catch {
+    setStatus("Kopieren fehlgeschlagen.", true);
+  }
+});
+
 els.notesSearch.addEventListener("input", () => {
+  updateSearchClearButton();
   clearTimeout(searchDebounce);
   searchDebounce = setTimeout(() => {
     const q = els.notesSearch.value.trim().toLowerCase();
@@ -294,6 +415,13 @@ els.notesSearch.addEventListener("input", () => {
     );
     renderList(filtered);
   }, 200);
+});
+
+els.notesSearchClear.addEventListener("click", () => {
+  els.notesSearch.value = "";
+  renderList(allNotes);
+  updateSearchClearButton();
+  els.notesSearch.focus();
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -319,9 +447,83 @@ function updateTitleCounter() {
   if (el) el.textContent = `(${allNotes.length})`;
 }
 
+function updateSearchClearButton() {
+  const hasValue = els.notesSearch.value.trim().length > 0;
+  els.notesSearchClear.classList.toggle("hidden", !hasValue);
+}
+
 function typeLabel(type) {
-  const map = { note: "Notiz", code: "Code", annotation: "Anmerkung" };
+  const map = { note: "Notiz", code: "Code", annotation: "Anmerkung", vault: "Vault" };
   return map[type] || type;
+}
+
+async function encryptVaultContent(plainText, password) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iterations = 310000;
+  const key = await deriveVaultKey(password, salt);
+  const encoded = new TextEncoder().encode(String(plainText || ""));
+  const cipherBuffer = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+  const payload = {
+    v: 1,
+    alg: "AES-256-GCM",
+    kdf: "PBKDF2-HMAC-SHA-256",
+    iter: iterations,
+    s: bytesToBase64(salt),
+    i: bytesToBase64(iv),
+    c: bytesToBase64(new Uint8Array(cipherBuffer)),
+  };
+  return `vault:v1:${JSON.stringify(payload)}`;
+}
+
+async function decryptVaultContent(raw, password) {
+  if (!String(raw || "").startsWith("vault:v1:")) {
+    throw new Error("not encrypted");
+  }
+  const payload = JSON.parse(raw.slice("vault:v1:".length));
+  const salt = base64ToBytes(payload.s);
+  const iv = base64ToBytes(payload.i);
+  const cipher = base64ToBytes(payload.c);
+  const iter = Number(payload.iter) > 0 ? Number(payload.iter) : 250000;
+  if (payload.alg && payload.alg !== "AES-256-GCM") {
+    throw new Error("unsupported algorithm");
+  }
+  if (payload.kdf && payload.kdf !== "PBKDF2-HMAC-SHA-256") {
+    throw new Error("unsupported kdf");
+  }
+  const key = await deriveVaultKey(password, salt, iter);
+  const plainBuffer = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipher);
+  return new TextDecoder().decode(plainBuffer);
+}
+
+async function deriveVaultKey(password, salt, iterations = 310000) {
+  const baseKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    { name: "PBKDF2" },
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+function bytesToBase64(bytes) {
+  let str = "";
+  for (const b of bytes) str += String.fromCharCode(b);
+  return btoa(str);
+}
+
+function base64ToBytes(b64) {
+  const str = atob(String(b64 || ""));
+  const out = new Uint8Array(str.length);
+  for (let i = 0; i < str.length; i++) out[i] = str.charCodeAt(i);
+  return out;
 }
 
 function esc(str) {

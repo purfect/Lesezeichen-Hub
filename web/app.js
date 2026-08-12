@@ -32,6 +32,9 @@ const els = {
   exportHTML: document.getElementById("export-html"),
   importData: document.getElementById("import-data"),
   importDataFile: document.getElementById("import-data-file"),
+  backupFull: document.getElementById("backup-full"),
+  restoreFull: document.getElementById("restore-full"),
+  restoreFile: document.getElementById("restore-file"),
   reminderAlertsBlock: document.getElementById("reminder-alerts-block"),
   reminderAlertsList: document.getElementById("reminder-alerts-list"),
   status: document.getElementById("status"),
@@ -55,6 +58,9 @@ function init() {
   els.exportHTML.addEventListener("click", () => onExport("html"));
   els.importData.addEventListener("click", onImportDataClick);
   els.importDataFile.addEventListener("change", onImportDataSelected);
+  els.backupFull.addEventListener("click", onBackupFull);
+  els.restoreFull.addEventListener("click", () => { els.restoreFile.value = ""; els.restoreFile.click(); });
+  els.restoreFile.addEventListener("change", onRestoreFileSelected);
   els.reload.addEventListener("click", () => loadState(true));
   els.search.addEventListener("input", (e) => {
     state.search = e.target.value.trim().toLowerCase();
@@ -233,6 +239,62 @@ function parseImportPayload(file, rawText) {
     return parsed;
   }
   throw new Error("JSON-Format nicht unterstuetzt.");
+}
+
+async function onBackupFull() {
+  try {
+    setStatus("Vollsicherung wird erstellt...");
+    const response = await fetch("/api/backup");
+    if (!response.ok) throw new Error(`Fehler (${response.status})`);
+
+    const blob = await response.blob();
+    const cd = response.headers.get("content-disposition") || "";
+    const match = cd.match(/filename="([^"]+)"/);
+    const fileName = match?.[1] || `lesezeichen-vollsicherung-${Date.now()}.json`;
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+
+    setStatus("Vollsicherung abgeschlossen.");
+  } catch (error) {
+    setStatus(error.message || "Vollsicherung fehlgeschlagen.", true);
+  }
+}
+
+async function onRestoreFileSelected(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  try {
+    const rawText = await file.text();
+    const parsed = JSON.parse(rawText);
+
+    if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.groups)) {
+      throw new Error("Keine gueltige Vollsicherungsdatei (version 1 erwartet).");
+    }
+
+    setStatus("Vollsicherung wird eingespielt...");
+    const result = await request("/api/restore", {
+      method: "POST",
+      body: JSON.stringify(parsed),
+    });
+
+    const { created_groups, created_bookmarks, updated_bookmarks, created_notes, updated_notes } = result;
+    setStatus(
+      `Wiederherstellung abgeschlossen: ${created_groups} Gruppen neu, ` +
+      `${created_bookmarks} Lesezeichen neu, ${updated_bookmarks} aktualisiert, ` +
+      `${created_notes} Notizen neu, ${updated_notes} aktualisiert.`
+    );
+    await loadState(true);
+  } catch (error) {
+    setStatus(error.message || "Wiederherstellung fehlgeschlagen.", true);
+  }
 }
 
 function parseCSVImport(rawCSV) {
