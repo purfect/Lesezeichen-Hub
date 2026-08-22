@@ -1,0 +1,5 @@
+Lesezeichen-Hub.exe
+*.exe
+.data/
+data.db
+.runtime/

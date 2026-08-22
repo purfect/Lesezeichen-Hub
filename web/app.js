@@ -15,6 +15,10 @@ const els = {
   groups: document.getElementById("groups"),
   groupForm: document.getElementById("group-form"),
   toggleGroupForm: document.getElementById("toggle-group-form"),
+  moduleForm: document.getElementById("module-form"),
+  toggleModuleForm: document.getElementById("toggle-module-form"),
+  chooseModulePath: document.getElementById("choose-module-path"),
+  moduleGroup: document.getElementById("module-group"),
   bookmarkForm: document.getElementById("bookmark-form-global"),
   bookmarkEditDialog: document.getElementById("bookmark-edit-dialog"),
   bookmarkEditForm: document.getElementById("bookmark-edit-form"),
@@ -49,6 +53,9 @@ init();
 function init() {
   els.groupForm.addEventListener("submit", onCreateGroup);
   els.toggleGroupForm.addEventListener("click", toggleGroupForm);
+  els.moduleForm.addEventListener("submit", onCreateModule);
+  els.toggleModuleForm.addEventListener("click", toggleModuleForm);
+  els.chooseModulePath.addEventListener("click", onChooseModulePath);
   els.bookmarkForm.addEventListener("submit", onCreateBookmark);
   els.bookmarkEditForm.addEventListener("submit", onSaveEditedBookmark);
   els.bookmarkEditCancel.addEventListener("click", closeBookmarkEditDialog);
@@ -489,26 +496,35 @@ async function loadState(showHint = false) {
 function populateGroupSelect() {
   const previousValue = els.bookmarkGroup.value;
   els.bookmarkGroup.innerHTML = "";
+  const previousModuleValue = els.moduleGroup.value;
+  els.moduleGroup.innerHTML = "";
 
   if (state.groups.length === 0) {
     const option = document.createElement("option");
     option.value = "";
     option.textContent = "Bitte zuerst eine Gruppe anlegen";
     els.bookmarkGroup.appendChild(option);
+    els.moduleGroup.appendChild(option.cloneNode(true));
     els.bookmarkGroup.disabled = true;
+    els.moduleGroup.disabled = true;
     return;
   }
 
   els.bookmarkGroup.disabled = false;
+  els.moduleGroup.disabled = false;
   for (const group of state.groups) {
     const option = document.createElement("option");
     option.value = String(group.id);
     option.textContent = group.name;
     els.bookmarkGroup.appendChild(option);
+    els.moduleGroup.appendChild(option.cloneNode(true));
   }
 
   if (previousValue && state.groups.some((group) => String(group.id) === previousValue)) {
     els.bookmarkGroup.value = previousValue;
+  }
+  if (previousModuleValue && state.groups.some((group) => String(group.id) === previousModuleValue)) {
+    els.moduleGroup.value = previousModuleValue;
   }
 }
 
@@ -529,6 +545,50 @@ function toggleGroupForm() {
   if (!isHidden) {
     const firstInput = els.groupForm.querySelector("input[name='name']");
     firstInput?.focus();
+  }
+}
+
+function toggleModuleForm() {
+  const isHidden = els.moduleForm.classList.toggle("hidden");
+  els.toggleModuleForm.setAttribute("aria-expanded", String(!isHidden));
+  if (!isHidden) {
+    els.moduleForm.querySelector("input[name='name']")?.focus();
+  }
+}
+
+async function onChooseModulePath() {
+  try {
+    setStatus("Ordnerdialog wird geoeffnet...");
+    const result = await request("/api/module-folder");
+    if (result?.path) {
+      els.moduleForm.elements.namedItem("path").value = result.path;
+    }
+    setStatus(result?.path ? "Ordner ausgewaehlt." : "Keine Auswahl getroffen.");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function onCreateModule(event) {
+  event.preventDefault();
+  const formData = new FormData(event.target);
+  try {
+    await request("/api/modules", {
+      method: "POST",
+      body: JSON.stringify({
+        group_id: Number(formData.get("group_id")),
+        name: formData.get("name")?.toString().trim(),
+        path: formData.get("path")?.toString().trim(),
+        notes: formData.get("notes")?.toString().trim(),
+        tags: parseTagsInput(formData.get("tags")),
+      }),
+    });
+    event.target.reset();
+    toggleModuleForm();
+    setStatus("Modul integriert.");
+    await loadState();
+  } catch (error) {
+    setStatus(error.message, true);
   }
 }
 

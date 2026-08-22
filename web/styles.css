@@ -348,6 +348,23 @@ select {
   padding: 10px 11px;
 }
 
+.path-picker {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+}
+
+.path-picker input {
+  flex: 1;
+  min-width: 0;
+}
+
+.path-picker button {
+  flex: 0 0 auto;
+  margin-top: 6px;
+  white-space: nowrap;
+}
+
 input::placeholder,
 textarea::placeholder {
   color: #8ea4c4;
