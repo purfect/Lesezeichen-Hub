@@ -15,6 +15,8 @@ const els = {
   groups: document.getElementById("groups"),
   groupForm: document.getElementById("group-form"),
   toggleGroupForm: document.getElementById("toggle-group-form"),
+  moduleForm: document.getElementById("module-form"),
+  toggleModuleForm: document.getElementById("toggle-module-form"),
   bookmarkForm: document.getElementById("bookmark-form-global"),
   bookmarkEditDialog: document.getElementById("bookmark-edit-dialog"),
   bookmarkEditForm: document.getElementById("bookmark-edit-form"),
@@ -49,6 +51,8 @@ init();
 function init() {
   els.groupForm.addEventListener("submit", onCreateGroup);
   els.toggleGroupForm.addEventListener("click", toggleGroupForm);
+  els.moduleForm.addEventListener("submit", onCreateModule);
+  els.toggleModuleForm.addEventListener("click", toggleModuleForm);
   els.bookmarkForm.addEventListener("submit", onCreateBookmark);
   els.bookmarkEditForm.addEventListener("submit", onSaveEditedBookmark);
   els.bookmarkEditCancel.addEventListener("click", closeBookmarkEditDialog);
@@ -529,6 +533,34 @@ function toggleGroupForm() {
   if (!isHidden) {
     const firstInput = els.groupForm.querySelector("input[name='name']");
     firstInput?.focus();
+  }
+}
+
+function toggleModuleForm() {
+  const isHidden = els.moduleForm.classList.toggle("hidden");
+  els.toggleModuleForm.setAttribute("aria-expanded", String(!isHidden));
+  if (!isHidden) {
+    els.moduleForm.querySelector("input[name='name']")?.focus();
+  }
+}
+
+async function onCreateModule(event) {
+  event.preventDefault();
+  const formData = new FormData(event.target);
+  try {
+    await request("/api/modules", {
+      method: "POST",
+      body: JSON.stringify({
+        name: formData.get("name")?.toString().trim(),
+        path: formData.get("path")?.toString().trim(),
+      }),
+    });
+    event.target.reset();
+    toggleModuleForm();
+    setStatus("Modul integriert.");
+    await loadState();
+  } catch (error) {
+    setStatus(error.message, true);
   }
 }
 

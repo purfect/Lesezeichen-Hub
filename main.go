@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
+	"path/filepath"
 	"regexp"
 	"runtime/debug"
 	"sort"
@@ -213,6 +215,8 @@ func main() {
 	mux.HandleFunc("/api/bookmarks/", app.handleBookmarkRoutes)
 	mux.HandleFunc("/api/notes", app.handleNotes)
 	mux.HandleFunc("/api/notes/", app.handleNoteRoutes)
+	mux.HandleFunc("/api/modules", app.handleModules)
+	mux.HandleFunc("/modules/", app.handleModuleFiles)
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
 	mux.HandleFunc("/api/silver-prices", app.handleSilverPrices)
 	mux.HandleFunc("/silver-preise", app.handleSilverPricesPage)
@@ -239,6 +243,95 @@ func main() {
 	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("listen: %v", err)
 	}
+}
+
+func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+
+	var payload struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
+		return
+	}
+	name := strings.TrimSpace(payload.Name)
+	rootPath := strings.TrimSpace(payload.Path)
+	if name == "" || rootPath == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("name und pfad sind erforderlich"))
+		return
+	}
+	rootPath, err := filepath.Abs(rootPath)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("pfad ist ungueltig"))
+		return
+	}
+	info, err := os.Stat(rootPath)
+	if err != nil || !info.IsDir() {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("modulpfad ist kein vorhandener ordner"))
+		return
+	}
+	if _, err := os.Stat(filepath.Join(rootPath, "index.html")); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("modul braucht eine index.html"))
+		return
+	}
+
+	tx, err := app.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(r.Context(), `INSERT INTO modules(name, root_path) VALUES(?, ?)`, name, rootPath)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("modul konnte nicht angelegt werden: %v", err))
+		return
+	}
+	moduleID, _ := result.LastInsertId()
+	groupResult, err := tx.ExecContext(r.Context(), `INSERT INTO groups(name, description, sort_order) VALUES(?, ?, ?)`, name, "Lokales Modul", 0)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("modulgruppe konnte nicht angelegt werden: %v", err))
+		return
+	}
+	groupID, _ := groupResult.LastInsertId()
+	moduleURL := fmt.Sprintf("/modules/%d/index.html", moduleID)
+	if _, err := tx.ExecContext(r.Context(), `INSERT INTO bookmarks(group_id, title, url, notes, favorite, sort_order) VALUES(?, ?, ?, ?, ?, ?)`, groupID, name, moduleURL, rootPath, 1, 0); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("modulstart konnte nicht angelegt werden: %v", err))
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": moduleID, "url": moduleURL})
+}
+
+func (app *application) handleModuleFiles(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/modules/"), "/")
+	if len(parts) < 2 {
+		http.NotFound(w, r)
+		return
+	}
+	moduleID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || moduleID <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	var rootPath string
+	if err := app.db.QueryRowContext(r.Context(), `SELECT root_path FROM modules WHERE id = ?`, moduleID).Scan(&rootPath); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	relativePath := path.Join(parts[1:]...)
+	if relativePath == "." || strings.HasPrefix(relativePath, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(rootPath, filepath.FromSlash(relativePath)))
 }
 
 func initializeSchema(db *sql.DB) error {
@@ -271,6 +364,12 @@ func initializeSchema(db *sql.DB) error {
 			tags TEXT NOT NULL DEFAULT '',
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS modules (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			root_path TEXT NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
 	}
 
@@ -1792,6 +1891,9 @@ func validateURL(raw string) error {
 	u, err := url.ParseRequestURI(raw)
 	if err != nil {
 		return fmt.Errorf("url ist ungueltig")
+	}
+	if u.Scheme == "" && strings.HasPrefix(u.Path, "/modules/") {
+		return nil
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("url muss mit http:// oder https:// beginnen")

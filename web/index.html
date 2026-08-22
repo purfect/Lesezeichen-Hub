@@ -113,6 +113,25 @@
         </form>
       </div>
 
+      <div class="add-block module-block">
+        <div class="add-bookmark-head">
+          <h3>Lokales Modul</h3>
+          <button id="toggle-module-form" class="plus-button" type="button" aria-expanded="false" title="Lokales Modul integrieren">+</button>
+        </div>
+        <p class="search-info">Eine lokale Webanwendung als eigene Gruppe einbinden.</p>
+        <form id="module-form" class="hidden">
+          <label>
+            Name
+            <input required name="name" maxlength="100" placeholder="z.B. Werkplan" />
+          </label>
+          <label>
+            Lokaler Ordner
+            <input required name="path" placeholder="C:\\Projekte\\werkplan" />
+          </label>
+          <button type="submit">Modul integrieren</button>
+        </form>
+      </div>
+
       <div id="reminder-alerts-block" class="add-block reminder-alerts hidden" aria-live="polite">
         <h3>Wiedervorlage bald/faellig</h3>
         <p class="search-info">Alle Lesezeichen mit Datum bis in 3 Tagen oder bereits ueberschritten.</p>
