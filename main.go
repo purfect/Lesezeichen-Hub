@@ -394,11 +394,15 @@ func (app *application) handleModuleFiles(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
-	relativePath := path.Join(parts[1:]...)
-	if relativePath == "." || strings.HasPrefix(relativePath, "..") {
+	relativePath := path.Clean(path.Join(parts[1:]...))
+	if relativePath == "." || relativePath == ".." || strings.HasPrefix(relativePath, "../") || path.IsAbs(relativePath) {
 		http.NotFound(w, r)
 		return
 	}
+
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	http.ServeFile(w, r, filepath.Join(rootPath, filepath.FromSlash(relativePath)))
 }
 
