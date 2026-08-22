@@ -16,9 +16,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -216,6 +218,7 @@ func main() {
 	mux.HandleFunc("/api/notes", app.handleNotes)
 	mux.HandleFunc("/api/notes/", app.handleNoteRoutes)
 	mux.HandleFunc("/api/modules", app.handleModules)
+	mux.HandleFunc("/api/module-folder", app.handleModuleFolder)
 	mux.HandleFunc("/modules/", app.handleModuleFiles)
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
 	mux.HandleFunc("/api/silver-prices", app.handleSilverPrices)
@@ -252,8 +255,11 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
+		GroupID int64    `json:"group_id"`
+		Name    string   `json:"name"`
+		Path    string   `json:"path"`
+		Notes   string   `json:"notes"`
+		Tags    []string `json:"tags"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
@@ -261,8 +267,8 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(payload.Name)
 	rootPath := strings.TrimSpace(payload.Path)
-	if name == "" || rootPath == "" {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("name und pfad sind erforderlich"))
+	if payload.GroupID <= 0 || name == "" || rootPath == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("gruppe, name und pfad sind erforderlich"))
 		return
 	}
 	rootPath, err := filepath.Abs(rootPath)
@@ -286,20 +292,63 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(r.Context(), `INSERT INTO modules(name, root_path) VALUES(?, ?)`, name, rootPath)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("modul konnte nicht angelegt werden: %v", err))
+	var groupExists int
+	if err := tx.QueryRowContext(r.Context(), `SELECT 1 FROM groups WHERE id = ?`, payload.GroupID).Scan(&groupExists); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("gruppe nicht gefunden"))
 		return
 	}
-	moduleID, _ := result.LastInsertId()
-	groupResult, err := tx.ExecContext(r.Context(), `INSERT INTO groups(name, description, sort_order) VALUES(?, ?, ?)`, name, "Lokales Modul", 0)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("modulgruppe konnte nicht angelegt werden: %v", err))
+	var moduleID int64
+	err = tx.QueryRowContext(r.Context(), `SELECT id FROM modules WHERE name = ?`, name).Scan(&moduleID)
+	if errors.Is(err, sql.ErrNoRows) {
+		result, insertErr := tx.ExecContext(r.Context(), `INSERT INTO modules(name, root_path) VALUES(?, ?)`, name, rootPath)
+		if insertErr != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("modul konnte nicht angelegt werden: %v", insertErr))
+			return
+		}
+		moduleID, _ = result.LastInsertId()
+	} else if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
 		return
+	} else {
+		moduleURL := fmt.Sprintf("/modules/%d/index.html", moduleID)
+		var bookmarkCount int
+		if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM bookmarks WHERE url = ? AND archived = 0`, moduleURL).Scan(&bookmarkCount); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if bookmarkCount > 0 {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("ein aktives Modul mit diesem Namen existiert bereits"))
+			return
+		}
+		if _, err := tx.ExecContext(r.Context(), `UPDATE modules SET root_path = ? WHERE id = ?`, rootPath, moduleID); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
-	groupID, _ := groupResult.LastInsertId()
 	moduleURL := fmt.Sprintf("/modules/%d/index.html", moduleID)
-	if _, err := tx.ExecContext(r.Context(), `INSERT INTO bookmarks(group_id, title, url, notes, favorite, sort_order) VALUES(?, ?, ?, ?, ?, ?)`, groupID, name, moduleURL, rootPath, 1, 0); err != nil {
+	var existingBookmarkID int64
+	var existingArchived int
+	err = tx.QueryRowContext(r.Context(), `SELECT id, archived FROM bookmarks WHERE url = ? LIMIT 1`, moduleURL).Scan(&existingBookmarkID, &existingArchived)
+	if err == nil {
+		if existingArchived == 0 {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("ein aktives Modul mit diesem Namen existiert bereits"))
+			return
+		}
+		if _, err := tx.ExecContext(r.Context(), `UPDATE bookmarks SET group_id = ?, title = ?, notes = ?, tags = ?, favorite = 1, archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, payload.GroupID, name, strings.TrimSpace(payload.Notes), serializeTags(payload.Tags), existingBookmarkID); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"id": moduleID, "url": moduleURL, "reactivated": true})
+		return
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(), `INSERT INTO bookmarks(group_id, title, url, notes, tags, favorite, sort_order) VALUES(?, ?, ?, ?, ?, ?, ?)`, payload.GroupID, name, moduleURL, strings.TrimSpace(payload.Notes), serializeTags(payload.Tags), 1, 0); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("modulstart konnte nicht angelegt werden: %v", err))
 		return
 	}
@@ -308,6 +357,25 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": moduleID, "url": moduleURL})
+}
+
+func (app *application) handleModuleFolder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if runtime.GOOS != "windows" {
+		writeErr(w, http.StatusNotImplemented, fmt.Errorf("der Windows-Ordnerdialog ist nur unter Windows verfuegbar"))
+		return
+	}
+
+	const pickerScript = `Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Ordner der lokalen Webanwendung waehlen'; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.SelectedPath) }`
+	output, err := exec.Command("powershell.exe", "-NoProfile", "-STA", "-Command", pickerScript).Output()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, fmt.Errorf("Windows-Ordnerdialog konnte nicht geoeffnet werden"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": strings.TrimSpace(string(output))})
 }
 
 func (app *application) handleModuleFiles(w http.ResponseWriter, r *http.Request) {

@@ -121,12 +121,27 @@
         <p class="search-info">Eine lokale Webanwendung als eigene Gruppe einbinden.</p>
         <form id="module-form" class="hidden">
           <label>
+            Gruppe
+            <select id="module-group" name="group_id" required></select>
+          </label>
+          <label>
             Name
             <input required name="name" maxlength="100" placeholder="z.B. Werkplan" />
           </label>
           <label>
             Lokaler Ordner
-            <input required name="path" placeholder="C:\\Projekte\\werkplan" />
+            <span class="path-picker">
+              <input required name="path" placeholder="C:\\Projekte\\werkplan" />
+              <button id="choose-module-path" class="ghost" type="button">Ordner waehlen</button>
+            </span>
+          </label>
+          <label>
+            Notiz
+            <textarea name="notes" rows="2" maxlength="500" placeholder="Notiz (optional)"></textarea>
+          </label>
+          <label>
+            Tags
+            <input name="tags" placeholder="z.B. werkzeuge, offline" />
           </label>
           <button type="submit">Modul integrieren</button>
         </form>
