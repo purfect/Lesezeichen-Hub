@@ -268,22 +268,32 @@
 
   function requestJson(method, path, body) {
     const url = `${getBaseUrl()}${path}`;
+    const requestBody = body === undefined ? undefined : JSON.stringify(body);
 
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method,
         url,
         headers: {
-          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Content-Type": "application/json; charset=UTF-8",
         },
-        data: body ? JSON.stringify(body) : undefined,
+        data: requestBody === undefined ? null : String(requestBody),
+        timeout: 15000,
         onload: (response) => {
-          const text = response.responseText || "";
+          const text = String(response.responseText || "").replace(/^\uFEFF/, "");
           const payload = tryParseJson(text);
 
           if (response.status < 200 || response.status >= 300) {
-            const message = payload && payload.error ? payload.error : `HTTP ${response.status}`;
+            const message = payload && payload.error
+              ? payload.error
+              : `HTTP ${response.status}: ${text.slice(0, 180) || "leere Antwort"}`;
             reject(new Error(`${message} (${url})`));
+            return;
+          }
+
+          if (text && !payload) {
+            reject(new Error(`Hub antwortete nicht mit JSON: ${text.slice(0, 180)} (${url})`));
             return;
           }
 
