@@ -328,6 +328,10 @@ h1 {
   background: rgba(11, 22, 35, 0.54);
 }
 
+#data-actions.hidden {
+  display: none;
+}
+
 label {
   display: block;
   font-size: 0.9rem;

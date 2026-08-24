@@ -11,6 +11,8 @@ const state = {
   },
 };
 
+const metalPricesVisibleKey = "lsz_metal_prices_visible";
+
 const els = {
   groups: document.getElementById("groups"),
   addDialog: document.getElementById("add-dialog"),
@@ -36,6 +38,7 @@ const els = {
   groupExportCancel: document.getElementById("group-export-cancel"),
   dataActions: document.getElementById("data-actions"),
   toggleDataActions: document.getElementById("toggle-data-actions"),
+  toggleMetalPrices: document.getElementById("toggle-metal-prices"),
   searchInfo: document.getElementById("search-info"),
   favoritesSegment: document.getElementById("favorites-segment"),
   favoritesQuickbar: document.getElementById("favorites-quickbar"),
@@ -75,6 +78,7 @@ function init() {
   els.addDialogClose.addEventListener("click", closeAddDialog);
   els.addDialogTabs.forEach((tab) => tab.addEventListener("click", () => selectAddDialogPanel(tab.dataset.addPanel)));
   els.toggleDataActions.addEventListener("click", toggleDataActions);
+  els.toggleMetalPrices.addEventListener("click", toggleMetalPricesVisibility);
   els.exportJSON.addEventListener("click", () => onExport("json"));
   els.exportCSV.addEventListener("click", () => onExport("csv"));
   els.exportHTML.addEventListener("click", () => onExport("html"));
@@ -98,7 +102,26 @@ function init() {
   document.addEventListener("keydown", onGlobalKeyDown);
 
   updateSearchClearButton();
+  syncMetalPricesVisibility();
   loadState();
+}
+
+function areMetalPricesVisible() {
+  return localStorage.getItem(metalPricesVisibleKey) !== "false";
+}
+
+function syncMetalPricesVisibility() {
+  const visible = areMetalPricesVisible();
+  document.querySelector(".metal-footer")?.classList.toggle("hidden", !visible);
+  els.toggleMetalPrices.textContent = visible ? "Edelmetallpreise ausblenden" : "Edelmetallpreise anzeigen";
+  els.toggleMetalPrices.setAttribute("aria-pressed", String(visible));
+}
+
+function toggleMetalPricesVisibility() {
+  const visible = !areMetalPricesVisible();
+  localStorage.setItem(metalPricesVisibleKey, String(visible));
+  syncMetalPricesVisibility();
+  window.dispatchEvent(new CustomEvent("metal-prices-visibility-change", { detail: { visible } }));
 }
 
 function isTextInput(target) {

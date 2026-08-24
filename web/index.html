@@ -24,7 +24,6 @@
           <input id="search-archive" type="checkbox" /> Archiv durchsuchen
         </label>
       </div>
-      <button id="open-add-dialog" type="button" title="Hinzufuegen">Hinzufuegen</button>
       <a class="gear-link" href="/static/overview.html" aria-label="Zur Uebersicht">
         &#128161;
       </a>
@@ -53,6 +52,7 @@
       <div class="panel-head">
         <h2>Gruppen</h2>
         <div class="panel-actions">
+          <button id="open-add-dialog" type="button" title="Hinzufuegen">Hinzufuegen</button>
           <button id="toggle-data-actions" class="ghost" type="button" aria-expanded="false">Verwalten</button>
         </div>
       </div>
@@ -63,6 +63,7 @@
         <button id="import-data" class="ghost" type="button">Import</button>
         <button id="backup-full" class="ghost" type="button" title="Vollsicherung inkl. Notizen">Vollsicherung</button>
         <button id="restore-full" class="ghost" type="button" title="Vollsicherung wiederherstellen">Wiederherstellen</button>
+        <button id="toggle-metal-prices" class="ghost" type="button" aria-pressed="true">Edelmetallpreise ausblenden</button>
         <button id="reload" class="ghost" type="button">Neu laden</button>
         <input id="import-data-file" type="file" accept="application/json,.json,text/csv,.csv,text/html,.html,.htm" class="hidden" />
         <input id="restore-file" type="file" accept="application/json,.json" class="hidden" />
