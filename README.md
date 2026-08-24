@@ -33,7 +33,9 @@ go run .
 
 3. Im Browser oeffnen
 
-http://localhost:2222
+http://127.0.0.1:2222
+
+`go run .` nutzt standardmaessig Port `2222`. Die Windows-Klickstartskripte nutzen dagegen Port `3233`, damit der Startport dort direkt als Parameter angepasst werden kann.
 
 ## Lokale Module integrieren
 
@@ -59,6 +61,7 @@ Port anpassen:
 - Standard-Port in start-lesezeichen.cmd: set "PORT=3233"
 - Optional beim Start als Parameter: start-lesezeichen.cmd 2233
 - Beim Portwechsel wird ein alter Prozess automatisch beendet und neu gestartet
+- Nach Klickstart im Browser oeffnen: http://127.0.0.1:3233
 
 ## Webseite direkt aus Firefox speichern (Tampermonkey)
 

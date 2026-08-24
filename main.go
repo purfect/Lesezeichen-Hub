@@ -1235,6 +1235,13 @@ func (app *application) handleBookmarks(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
+	if duplicate, err := app.findDuplicateBookmark(r.Context(), urlValue, 0); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	} else if duplicate != "" {
+		writeErr(w, http.StatusConflict, fmt.Errorf("doppeltes lesezeichen existiert bereits: %s", duplicate))
+		return
+	}
 	remindAt, err := parseOptionalDateTime(payload.RemindAt)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("remind_at ist ungueltig"))
@@ -1302,6 +1309,13 @@ func (app *application) handleBookmarkRoutes(w http.ResponseWriter, r *http.Requ
 		urlValue := strings.TrimSpace(payload.URL)
 		if err := validateURL(urlValue); err != nil {
 			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if duplicate, err := app.findDuplicateBookmark(r.Context(), urlValue, bookmarkID); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		} else if duplicate != "" {
+			writeErr(w, http.StatusConflict, fmt.Errorf("doppeltes lesezeichen existiert bereits: %s", duplicate))
 			return
 		}
 		remindAt, err := parseOptionalDateTime(payload.RemindAt)
@@ -2002,6 +2016,53 @@ func validateURL(raw string) error {
 		return fmt.Errorf("url muss mit http:// oder https:// beginnen")
 	}
 	return nil
+}
+
+func (app *application) findDuplicateBookmark(ctx context.Context, rawURL string, excludeID int64) (string, error) {
+	targetURL := normalizeBookmarkURL(rawURL)
+	rows, err := app.db.QueryContext(ctx, `
+		SELECT bookmarks.id, bookmarks.title, bookmarks.url, groups.name
+		FROM bookmarks
+		JOIN groups ON groups.id = bookmarks.group_id
+		WHERE bookmarks.id != ?`, excludeID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var title, candidateURL, groupName string
+		if err := rows.Scan(&id, &title, &candidateURL, &groupName); err != nil {
+			return "", err
+		}
+		if normalizeBookmarkURL(candidateURL) == targetURL {
+			return fmt.Sprintf("%q in Gruppe %q", title, groupName), nil
+		}
+	}
+	return "", rows.Err()
+}
+
+func normalizeBookmarkURL(raw string) string {
+	value := strings.TrimSpace(raw)
+	u, err := url.Parse(value)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return value
+	}
+
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	if (u.Scheme == "http" && u.Port() == "80") || (u.Scheme == "https" && u.Port() == "443") {
+		u.Host = u.Hostname()
+	}
+	u.Fragment = ""
+	if u.Path == "" {
+		u.Path = "/"
+	}
+	if u.Path != "/" {
+		u.Path = strings.TrimRight(u.Path, "/")
+	}
+	return u.String()
 }
 
 func boolToInt(value bool) int {
