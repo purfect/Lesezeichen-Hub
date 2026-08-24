@@ -34,6 +34,7 @@ import (
 type application struct {
 	db             *sql.DB
 	webFS          fs.FS
+	externalPrices bool
 	metalPricesMu  sync.RWMutex
 	metalPrices    metalPricesPayload
 	metalPricesAt  time.Time
@@ -180,19 +181,21 @@ var embeddedWebFiles embed.FS
 
 func main() {
 	dbPath := envOrDefault("BOOKMARK_DB_PATH", "./data.db")
-	addr := envOrDefault("ADDR", ":2222")
+	addr := envOrDefault("ADDR", "127.0.0.1:2222")
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
 	defer db.Close()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	if err := initializeSchema(db); err != nil {
 		log.Fatalf("init schema: %v", err)
 	}
 
-	app := &application{db: db}
+	app := &application{db: db, externalPrices: envBool("ENABLE_EXTERNAL_PRICES", true)}
 	mux := http.NewServeMux()
 
 	webFS, err := fs.Sub(embeddedWebFiles, "web")
@@ -207,6 +210,7 @@ func main() {
 	}
 
 	mux.HandleFunc("/api/state", app.handleState)
+	mux.HandleFunc("/api/config", app.handleConfig)
 	mux.HandleFunc("/api/export", app.handleExport)
 	mux.HandleFunc("/api/import", app.handleImport)
 	mux.HandleFunc("/api/backup", app.handleBackup)
@@ -242,7 +246,7 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("Lesezeichen-Server laeuft auf http://localhost%s", addr)
+	log.Printf("Lesezeichen-Server laeuft auf http://%s", addr)
 	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("listen: %v", err)
 	}
@@ -403,8 +407,19 @@ func (app *application) handleModuleFiles(w http.ResponseWriter, r *http.Request
 }
 
 func initializeSchema(db *sql.DB) error {
-	statements := []string{
+	pragmas := []string{
 		`PRAGMA foreign_keys = ON;`,
+		`PRAGMA journal_mode = WAL;`,
+		`PRAGMA busy_timeout = 5000;`,
+		`PRAGMA synchronous = NORMAL;`,
+	}
+	for _, pragma := range pragmas {
+		if _, err := db.Exec(pragma); err != nil {
+			return err
+		}
+	}
+
+	statements := []string{
 		`CREATE TABLE IF NOT EXISTS groups (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL UNIQUE,
@@ -483,6 +498,14 @@ func (app *application) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
+}
+
+func (app *application) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"external_prices": app.externalPrices})
 }
 
 func (app *application) handleExport(w http.ResponseWriter, r *http.Request) {
@@ -1479,6 +1502,10 @@ func (app *application) handleMetalPrices(w http.ResponseWriter, r *http.Request
 		methodNotAllowed(w)
 		return
 	}
+	if !app.externalPrices {
+		writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("externe preisabfragen sind deaktiviert"))
+		return
+	}
 
 	prices, err := app.getMetalPrices(r.Context())
 	if err != nil {
@@ -1492,6 +1519,10 @@ func (app *application) handleMetalPrices(w http.ResponseWriter, r *http.Request
 func (app *application) handleSilverPrices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
+		return
+	}
+	if !app.externalPrices {
+		writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("externe preisabfragen sind deaktiviert"))
 		return
 	}
 
@@ -1974,6 +2005,18 @@ func boolToInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func envBool(key string, fallback bool) bool {
+	raw, exists := os.LookupEnv(key)
+	if !exists {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func parseTags(raw string) []string {

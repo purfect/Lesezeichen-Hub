@@ -126,6 +126,10 @@ h1 {
   width: min(560px, 100%);
 }
 
+.topbar-actions > button {
+  flex: 0 0 auto;
+}
+
 .gear-link {
   display: inline-flex;
   align-items: center;
@@ -183,7 +187,6 @@ h1 {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(220px, 300px) 1fr;
   gap: 18px;
   padding: 12px clamp(16px, 3vw, 36px) 48px;
 }
@@ -262,6 +265,11 @@ h1 {
   align-content: start;
 }
 
+.panel-list {
+  display: grid;
+  gap: 14px;
+}
+
 .add-block {
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -310,6 +318,14 @@ h1 {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: end;
+}
+
+#data-actions {
+  justify-content: flex-end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(11, 22, 35, 0.54);
 }
 
 label {
@@ -606,6 +622,12 @@ button.danger:hover {
   background: rgba(58, 20, 28, 0.3);
 }
 
+.panel-list > .reminder-alerts {
+  padding: 12px;
+  border: 1px solid rgba(214, 76, 92, 0.5);
+  border-radius: 12px;
+}
+
 .reminder-alerts-list {
   margin: 0;
   padding-left: 18px;
@@ -741,6 +763,47 @@ button.danger:hover {
   color: var(--ink);
   background: rgba(16, 25, 40, 0.98);
   box-shadow: 0 20px 54px rgba(2, 8, 16, 0.62);
+}
+
+.dialog-shell {
+  padding: 16px;
+}
+
+.dialog-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.dialog-heading h2,
+.dialog-shell h3 {
+  margin: 0;
+}
+
+.add-dialog-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.add-dialog-tab {
+  padding: 8px;
+  background: rgba(20, 34, 51, 0.88);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.add-dialog-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #041512;
+}
+
+.add-dialog-panel .search-info {
+  margin-top: 0;
 }
 
 .edit-dialog::backdrop {

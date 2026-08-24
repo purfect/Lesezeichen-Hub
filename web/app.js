@@ -13,10 +13,13 @@ const state = {
 
 const els = {
   groups: document.getElementById("groups"),
+  addDialog: document.getElementById("add-dialog"),
+  openAddDialog: document.getElementById("open-add-dialog"),
+  addDialogClose: document.getElementById("add-dialog-close"),
+  addDialogTabs: [...document.querySelectorAll(".add-dialog-tab")],
+  addDialogPanels: [...document.querySelectorAll(".add-dialog-panel")],
   groupForm: document.getElementById("group-form"),
-  toggleGroupForm: document.getElementById("toggle-group-form"),
   moduleForm: document.getElementById("module-form"),
-  toggleModuleForm: document.getElementById("toggle-module-form"),
   chooseModulePath: document.getElementById("choose-module-path"),
   moduleGroup: document.getElementById("module-group"),
   bookmarkForm: document.getElementById("bookmark-form-global"),
@@ -25,7 +28,14 @@ const els = {
   bookmarkEditCancel: document.getElementById("bookmark-edit-cancel"),
   bookmarkEditGroup: document.getElementById("bookmark-edit-group"),
   bookmarkGroup: document.getElementById("bookmark-group"),
-  toggleBookmarkForm: document.getElementById("toggle-bookmark-form"),
+  groupEditDialog: document.getElementById("group-edit-dialog"),
+  groupEditForm: document.getElementById("group-edit-form"),
+  groupEditCancel: document.getElementById("group-edit-cancel"),
+  groupExportDialog: document.getElementById("group-export-dialog"),
+  groupExportForm: document.getElementById("group-export-form"),
+  groupExportCancel: document.getElementById("group-export-cancel"),
+  dataActions: document.getElementById("data-actions"),
+  toggleDataActions: document.getElementById("toggle-data-actions"),
   searchInfo: document.getElementById("search-info"),
   favoritesSegment: document.getElementById("favorites-segment"),
   favoritesQuickbar: document.getElementById("favorites-quickbar"),
@@ -52,14 +62,19 @@ init();
 
 function init() {
   els.groupForm.addEventListener("submit", onCreateGroup);
-  els.toggleGroupForm.addEventListener("click", toggleGroupForm);
   els.moduleForm.addEventListener("submit", onCreateModule);
-  els.toggleModuleForm.addEventListener("click", toggleModuleForm);
   els.chooseModulePath.addEventListener("click", onChooseModulePath);
   els.bookmarkForm.addEventListener("submit", onCreateBookmark);
   els.bookmarkEditForm.addEventListener("submit", onSaveEditedBookmark);
   els.bookmarkEditCancel.addEventListener("click", closeBookmarkEditDialog);
-  els.toggleBookmarkForm.addEventListener("click", toggleBookmarkForm);
+  els.groupEditForm.addEventListener("submit", onSaveEditedGroup);
+  els.groupEditCancel.addEventListener("click", closeGroupEditDialog);
+  els.groupExportForm.addEventListener("submit", onExportGroup);
+  els.groupExportCancel.addEventListener("click", closeGroupExportDialog);
+  els.openAddDialog.addEventListener("click", () => openAddDialog("bookmark"));
+  els.addDialogClose.addEventListener("click", closeAddDialog);
+  els.addDialogTabs.forEach((tab) => tab.addEventListener("click", () => selectAddDialogPanel(tab.dataset.addPanel)));
+  els.toggleDataActions.addEventListener("click", toggleDataActions);
   els.exportJSON.addEventListener("click", () => onExport("json"));
   els.exportCSV.addEventListener("click", () => onExport("csv"));
   els.exportHTML.addEventListener("click", () => onExport("html"));
@@ -80,9 +95,63 @@ function init() {
     render();
   });
   els.searchClear.addEventListener("click", clearSearch);
+  document.addEventListener("keydown", onGlobalKeyDown);
 
   updateSearchClearButton();
   loadState();
+}
+
+function isTextInput(target) {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable;
+}
+
+function onGlobalKeyDown(event) {
+  if (event.key === "Escape") {
+    closeAddDialog();
+    closeBookmarkEditDialog();
+    closeGroupEditDialog();
+    closeGroupExportDialog();
+    return;
+  }
+  if (isTextInput(event.target) || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.key === "/") {
+    event.preventDefault();
+    els.search.focus();
+  } else if (event.key.toLowerCase() === "n") {
+    event.preventDefault();
+    openAddDialog("bookmark");
+  } else if (event.key.toLowerCase() === "g") {
+    event.preventDefault();
+    openAddDialog("group");
+  }
+}
+
+function openAddDialog(panel) {
+  selectAddDialogPanel(panel);
+  if (!els.addDialog.open) els.addDialog.showModal();
+  const fieldName = panel === "bookmark" ? "title" : "name";
+  const firstInput = els.addDialog.querySelector(`[data-add-panel-content="${panel}"] [name="${fieldName}"]`);
+  firstInput?.focus();
+}
+
+function closeAddDialog() {
+  if (els.addDialog.open) els.addDialog.close();
+}
+
+function selectAddDialogPanel(panel) {
+  els.addDialogTabs.forEach((tab) => {
+    const selected = tab.dataset.addPanel === panel;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+  });
+  els.addDialogPanels.forEach((content) => {
+    content.hidden = content.dataset.addPanelContent !== panel;
+  });
+}
+
+function toggleDataActions() {
+  const isHidden = els.dataActions.classList.toggle("hidden");
+  els.toggleDataActions.setAttribute("aria-expanded", String(!isHidden));
 }
 
 function clearSearch() {
@@ -528,34 +597,6 @@ function populateGroupSelect() {
   }
 }
 
-function toggleBookmarkForm() {
-  const isHidden = els.bookmarkForm.classList.toggle("hidden");
-  els.toggleBookmarkForm.setAttribute("aria-expanded", String(!isHidden));
-
-  if (!isHidden) {
-    const firstInput = els.bookmarkForm.querySelector("input[name='title']");
-    firstInput?.focus();
-  }
-}
-
-function toggleGroupForm() {
-  const isHidden = els.groupForm.classList.toggle("hidden");
-  els.toggleGroupForm.setAttribute("aria-expanded", String(!isHidden));
-
-  if (!isHidden) {
-    const firstInput = els.groupForm.querySelector("input[name='name']");
-    firstInput?.focus();
-  }
-}
-
-function toggleModuleForm() {
-  const isHidden = els.moduleForm.classList.toggle("hidden");
-  els.toggleModuleForm.setAttribute("aria-expanded", String(!isHidden));
-  if (!isHidden) {
-    els.moduleForm.querySelector("input[name='name']")?.focus();
-  }
-}
-
 async function onChooseModulePath() {
   try {
     setStatus("Ordnerdialog wird geoeffnet...");
@@ -584,7 +625,7 @@ async function onCreateModule(event) {
       }),
     });
     event.target.reset();
-    toggleModuleForm();
+    closeAddDialog();
     setStatus("Modul integriert.");
     await loadState();
   } catch (error) {
@@ -1032,11 +1073,7 @@ async function onCreateGroup(event) {
     await loadState();
 
     if (!els.groupForm.classList.contains("hidden")) {
-      toggleGroupForm();
-    }
-
-    if (els.bookmarkForm.classList.contains("hidden")) {
-      toggleBookmarkForm();
+      closeAddDialog();
     }
   } catch (error) {
     setStatus(error.message, true);
@@ -1044,27 +1081,38 @@ async function onCreateGroup(event) {
 }
 
 async function onEditGroup(group) {
-  const name = prompt("Neuer Gruppenname:", group.name);
-  if (name === null) return;
-  const description = prompt("Beschreibung:", group.description || "") ?? "";
-  const sortOrderRaw = prompt("Reihenfolge (Zahl):", String(group.sort_order ?? 0));
-  if (sortOrderRaw === null) return;
+  els.groupEditForm.elements.namedItem("id").value = String(group.id);
+  els.groupEditForm.elements.namedItem("name").value = group.name || "";
+  els.groupEditForm.elements.namedItem("description").value = group.description || "";
+  els.groupEditForm.elements.namedItem("sort_order").value = String(group.sort_order ?? 0);
+  els.groupEditDialog.showModal();
+  els.groupEditForm.elements.namedItem("name").focus();
+}
 
-  const sortOrder = Number(sortOrderRaw);
-  if (Number.isNaN(sortOrder)) {
-    setStatus("Reihenfolge muss eine Zahl sein.", true);
+function closeGroupEditDialog() {
+  if (els.groupEditDialog.open) els.groupEditDialog.close();
+}
+
+async function onSaveEditedGroup(event) {
+  event.preventDefault();
+  const formData = new FormData(els.groupEditForm);
+  const id = Number(formData.get("id"));
+  const sortOrder = Number(formData.get("sort_order"));
+  if (!Number.isFinite(id) || id <= 0 || !Number.isFinite(sortOrder)) {
+    setStatus("Bitte eine gueltige Gruppe und Reihenfolge angeben.", true);
     return;
   }
 
   try {
-    await request(`/api/groups/${group.id}`, {
+    await request(`/api/groups/${id}`, {
       method: "PUT",
       body: JSON.stringify({
-        name: name.trim(),
-        description: description.trim(),
+        name: formData.get("name")?.toString().trim(),
+        description: formData.get("description")?.toString().trim(),
         sort_order: sortOrder,
       }),
     });
+    closeGroupEditDialog();
     setStatus("Gruppe aktualisiert.");
     await loadState();
   } catch (error) {
@@ -1084,19 +1132,26 @@ async function onDeleteGroup(group) {
 }
 
 async function onShareGroup(group) {
-  const choice = prompt(
-    "Exportformat fuer diese Gruppe (json, csv, html):",
-    "json",
-  );
-  if (choice === null) return;
+  els.groupExportForm.elements.namedItem("id").value = String(group.id);
+  els.groupExportForm.elements.namedItem("format").value = "json";
+  els.groupExportDialog.showModal();
+}
 
-  const format = (choice || "").trim().toLowerCase();
-  if (!["json", "csv", "html"].includes(format)) {
-    setStatus("Ungueltiges Format. Erlaubt: json, csv, html.", true);
+function closeGroupExportDialog() {
+  if (els.groupExportDialog.open) els.groupExportDialog.close();
+}
+
+async function onExportGroup(event) {
+  event.preventDefault();
+  const formData = new FormData(els.groupExportForm);
+  const id = Number(formData.get("id"));
+  const format = String(formData.get("format") || "").toLowerCase();
+  if (!Number.isFinite(id) || id <= 0 || !["json", "csv", "html"].includes(format)) {
+    setStatus("Ungueltige Exportauswahl.", true);
     return;
   }
-
-  await onExport(format, group.id);
+  closeGroupExportDialog();
+  await onExport(format, id);
 }
 
 async function onCreateBookmark(event) {
@@ -1133,6 +1188,7 @@ async function onCreateBookmark(event) {
       body: JSON.stringify(payload),
     });
     event.target.reset();
+    closeAddDialog();
     setStatus("Lesezeichen erstellt.");
     await loadState();
   } catch (error) {

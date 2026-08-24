@@ -40,6 +40,20 @@ function Test-HubReady {
     }
 }
 
+function Test-ExpectedHubProcess {
+    param(
+        [int]$ProcessId,
+        [string]$ExpectedPath
+    )
+
+    $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction SilentlyContinue
+    if ($null -eq $processInfo -or [string]::IsNullOrWhiteSpace($processInfo.ExecutablePath)) {
+        return $false
+    }
+
+    return $processInfo.ExecutablePath.Trim() -ieq $ExpectedPath.Trim()
+}
+
 if (-not (Test-Path $exe)) {
     Write-Host 'Keine EXE gefunden (erwartet: Lesezeichen-Hub.exe oder lesezeichen.exe).' -ForegroundColor Red
     Write-Host 'Bitte zuerst bauen, z.B.: go build -o Lesezeichen-Hub.exe .'
@@ -52,7 +66,7 @@ if (Test-Path $pidFile) {
         $oldPid = [int]$oldPidRaw
         $oldProcess = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
 
-        if ($null -ne $oldProcess -and ($oldProcess.ProcessName -ieq 'lesezeichen' -or $oldProcess.ProcessName -ieq 'Lesezeichen-Hub')) {
+        if ($null -ne $oldProcess -and (Test-ExpectedHubProcess -ProcessId $oldPid -ExpectedPath $exe)) {
             $oldAddr = ''
             if (Test-Path $addrFile) {
                 $oldAddr = (Get-Content $addrFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
@@ -67,6 +81,8 @@ if (Test-Path $pidFile) {
             Write-Host "Stoppe alten Prozess PID $oldPid..."
             Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
             Start-Sleep -Milliseconds 300
+        } elseif ($null -ne $oldProcess) {
+            Write-Host "PID-Datei verweist auf einen anderen Prozess. Dieser wird nicht beendet." -ForegroundColor Yellow
         }
     }
 

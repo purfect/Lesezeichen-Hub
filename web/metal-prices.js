@@ -17,6 +17,14 @@ function initMetalPricesFooter() {
 
 async function loadMetalPrices() {
   try {
+    const configResponse = await fetch("/api/config");
+    if (!configResponse.ok) throw new Error(`Fehler (${configResponse.status})`);
+    const config = await configResponse.json();
+    if (!config.external_prices) {
+      document.querySelector(".metal-footer")?.classList.add("hidden");
+      return;
+    }
+
     setFooterHint("Lade Edelmetallkurse und bestes 1oz-Angebot...");
     const [metalResponse, silverResponse] = await Promise.all([
       fetch("/api/metal-prices"),
