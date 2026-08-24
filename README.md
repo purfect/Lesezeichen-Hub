@@ -17,7 +17,7 @@ Die Anwendung laeuft komplett lokal, bietet Gruppen, Tags, Favoriten, Wiedervorl
 
 ## Schnellstart
 
-Voraussetzung: Go 1.22 oder neuer
+Voraussetzung: Go 1.23 oder neuer
 
 1. Abhaengigkeiten aufloesen
 
@@ -99,7 +99,28 @@ Danach die EXE direkt starten.
 Hinweise:
 
 - Web-Dateien sind per embed in der EXE enthalten
-- Port kann bei Bedarf per Umgebungsvariable gesetzt werden, z.B. ADDR=:2233
+- Der Server bindet standardmaessig ausschliesslich an `127.0.0.1`.
+- Port kann bei Bedarf per Umgebungsvariable gesetzt werden, z.B. `ADDR=127.0.0.1:2233`.
+
+## Betrieb und Datenschutz
+
+- SQLite verwendet WAL-Modus, einen Busy-Timeout und eine einzelne Verbindung, damit parallele Zugriffe zuverlaessig verarbeitet werden.
+- Die Edelmetallpreise rufen externe Anbieter ab. Sie lassen sich beim Start abschalten:
+
+```powershell
+$env:ENABLE_EXTERNAL_PRICES = 'false'
+.\Lesezeichen-Hub.exe
+```
+
+- Bei deaktivierter Option wird die Preisleiste ausgeblendet; alle Lesezeichen- und Notizdaten bleiben rein lokal.
+- Start- und Stopskripte pruefen den EXE-Pfad des gespeicherten Prozesses, bevor sie einen laufenden Prozess beenden.
+
+## Tastatur
+
+- `/`: Suche fokussieren
+- `N`: Dialog fuer ein neues Lesezeichen oeffnen
+- `G`: Dialog fuer eine neue Gruppe oeffnen
+- `Esc`: offenen Dialog schliessen
 
 ### GitHub Release Build
 

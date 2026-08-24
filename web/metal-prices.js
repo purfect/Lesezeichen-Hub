@@ -11,12 +11,34 @@ if (metalPriceEls.gold && metalPriceEls.silver && metalPriceEls.bestSilver && me
 }
 
 function initMetalPricesFooter() {
+  if (!areMetalPricesVisible()) {
+    document.querySelector(".metal-footer")?.classList.add("hidden");
+    return;
+  }
   loadMetalPrices();
   setInterval(loadMetalPrices, 2 * 60 * 60 * 1000);
 }
 
+function areMetalPricesVisible() {
+  return localStorage.getItem("lsz_metal_prices_visible") !== "false";
+}
+
+window.addEventListener("metal-prices-visibility-change", (event) => {
+  const visible = Boolean(event.detail?.visible);
+  document.querySelector(".metal-footer")?.classList.toggle("hidden", !visible);
+  if (visible) loadMetalPrices();
+});
+
 async function loadMetalPrices() {
   try {
+    const configResponse = await fetch("/api/config");
+    if (!configResponse.ok) throw new Error(`Fehler (${configResponse.status})`);
+    const config = await configResponse.json();
+    if (!config.external_prices) {
+      document.querySelector(".metal-footer")?.classList.add("hidden");
+      return;
+    }
+
     setFooterHint("Lade Edelmetallkurse und bestes 1oz-Angebot...");
     const [metalResponse, silverResponse] = await Promise.all([
       fetch("/api/metal-prices"),

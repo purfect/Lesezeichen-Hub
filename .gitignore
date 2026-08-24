@@ -2,4 +2,7 @@ Lesezeichen-Hub.exe
 *.exe
 .data/
 data.db
+data.db-shm
+data.db-wal
 .runtime/
+RELEASE_NOTES_2.0.md

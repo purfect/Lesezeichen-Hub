@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lesezeichen Hub</title>
+  <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -48,15 +49,50 @@
   </section>
 
   <main class="layout">
-    <section class="panel panel-create">
-      <h2>Hinzufuegen</h2>
-
-      <div class="add-block">
-        <div class="add-bookmark-head">
-          <h3>Neue Gruppe</h3>
-          <button id="toggle-group-form" class="plus-button" type="button" aria-expanded="false" title="Gruppe hinzufuegen">+</button>
+    <section class="panel panel-list">
+      <div class="panel-head">
+        <h2>Gruppen</h2>
+        <div class="panel-actions">
+          <button id="open-add-dialog" type="button" title="Hinzufuegen">Hinzufuegen</button>
+          <button id="toggle-data-actions" class="ghost" type="button" aria-expanded="false">Verwalten</button>
         </div>
-        <form id="group-form" class="hidden">
+      </div>
+      <div id="data-actions" class="panel-actions hidden">
+        <button id="export-json" class="ghost" type="button">Export JSON</button>
+        <button id="export-csv" class="ghost" type="button">Export CSV</button>
+        <button id="export-html" class="ghost" type="button">Export HTML</button>
+        <button id="import-data" class="ghost" type="button">Import</button>
+        <button id="backup-full" class="ghost" type="button" title="Vollsicherung inkl. Notizen">Vollsicherung</button>
+        <button id="restore-full" class="ghost" type="button" title="Vollsicherung wiederherstellen">Wiederherstellen</button>
+        <button id="toggle-metal-prices" class="ghost" type="button" aria-pressed="true">Edelmetallpreise ausblenden</button>
+        <button id="toggle-theme" class="ghost" type="button" aria-pressed="false">ASCII-Monitor aktivieren</button>
+        <button id="reload" class="ghost" type="button">Neu laden</button>
+        <input id="import-data-file" type="file" accept="application/json,.json,text/csv,.csv,text/html,.html,.htm" class="hidden" />
+        <input id="restore-file" type="file" accept="application/json,.json" class="hidden" />
+      </div>
+      <div id="reminder-alerts-block" class="reminder-alerts hidden" aria-live="polite">
+        <h3>Wiedervorlage bald/faellig</h3>
+        <p class="search-info">Alle Lesezeichen mit Datum bis in 3 Tagen oder bereits ueberschritten.</p>
+        <ul id="reminder-alerts-list" class="reminder-alerts-list"></ul>
+      </div>
+      <div id="groups" class="group-grid"></div>
+    </section>
+  </main>
+
+  <dialog id="add-dialog" class="edit-dialog">
+    <div class="dialog-shell">
+      <div class="dialog-heading">
+        <h2>Hinzufuegen</h2>
+        <button id="add-dialog-close" class="ghost icon-only" type="button" aria-label="Dialog schliessen">X</button>
+      </div>
+      <div class="add-dialog-tabs" role="tablist" aria-label="Art des neuen Eintrags">
+        <button class="add-dialog-tab active" type="button" data-add-panel="bookmark" role="tab" aria-selected="true">Lesezeichen</button>
+        <button class="add-dialog-tab" type="button" data-add-panel="group" role="tab" aria-selected="false">Gruppe</button>
+        <button class="add-dialog-tab" type="button" data-add-panel="module" role="tab" aria-selected="false">Lokales Modul</button>
+      </div>
+
+      <section class="add-dialog-panel" data-add-panel-content="group" hidden>
+        <form id="group-form">
           <label>
             Name
             <input required name="name" maxlength="100" placeholder="z.B. Arbeit" />
@@ -71,14 +107,10 @@
           </label>
           <button type="submit">Gruppe anlegen</button>
         </form>
-      </div>
+      </section>
 
-      <div class="add-block">
-        <div class="add-bookmark-head">
-          <h3>Neues Lesezeichen</h3>
-          <button id="toggle-bookmark-form" class="plus-button" type="button" aria-expanded="false" title="Lesezeichen hinzufuegen">+</button>
-        </div>
-        <form id="bookmark-form-global" class="bookmark-form-global hidden">
+      <section class="add-dialog-panel" data-add-panel-content="bookmark">
+        <form id="bookmark-form-global" class="bookmark-form-global">
           <label>
             Gruppe
             <select id="bookmark-group" name="group_id" required></select>
@@ -111,15 +143,11 @@
           </label>
           <button type="submit">Lesezeichen speichern</button>
         </form>
-      </div>
+      </section>
 
-      <div class="add-block module-block">
-        <div class="add-bookmark-head">
-          <h3>Lokales Modul</h3>
-          <button id="toggle-module-form" class="plus-button" type="button" aria-expanded="false" title="Lokales Modul integrieren">+</button>
-        </div>
+      <section class="add-dialog-panel module-block" data-add-panel-content="module" hidden>
         <p class="search-info">Eine lokale Webanwendung als eigene Gruppe einbinden.</p>
-        <form id="module-form" class="hidden">
+        <form id="module-form">
           <label>
             Gruppe
             <select id="module-group" name="group_id" required></select>
@@ -145,33 +173,9 @@
           </label>
           <button type="submit">Modul integrieren</button>
         </form>
-      </div>
-
-      <div id="reminder-alerts-block" class="add-block reminder-alerts hidden" aria-live="polite">
-        <h3>Wiedervorlage bald/faellig</h3>
-        <p class="search-info">Alle Lesezeichen mit Datum bis in 3 Tagen oder bereits ueberschritten.</p>
-        <ul id="reminder-alerts-list" class="reminder-alerts-list"></ul>
-      </div>
-    </section>
-
-    <section class="panel panel-list">
-      <div class="panel-head">
-        <h2>Gruppen</h2>
-        <div class="panel-actions">
-          <button id="export-json" class="ghost" type="button">Export JSON</button>
-          <button id="export-csv" class="ghost" type="button">Export CSV</button>
-          <button id="export-html" class="ghost" type="button">Export HTML</button>
-          <button id="import-data" class="ghost" type="button">Import</button>
-          <button id="backup-full" class="ghost" type="button" title="Vollsicherung inkl. Notizen">💾 Vollsicherung</button>
-          <button id="restore-full" class="ghost" type="button" title="Vollsicherung wiederherstellen">📥 Wiederherstellen</button>
-          <button id="reload" class="ghost" type="button">Neu laden</button>
-          <input id="import-data-file" type="file" accept="application/json,.json,text/csv,.csv,text/html,.html,.htm" class="hidden" />
-          <input id="restore-file" type="file" accept="application/json,.json" class="hidden" />
-        </div>
-      </div>
-      <div id="groups" class="group-grid"></div>
-    </section>
-  </main>
+      </section>
+    </div>
+  </dialog>
 
   <template id="group-template">
     <article class="group-card" draggable="true">
@@ -252,6 +256,48 @@
       <div class="dialog-actions">
         <button type="button" id="bookmark-edit-cancel" class="ghost">Abbrechen</button>
         <button type="submit">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="group-edit-dialog" class="edit-dialog">
+    <form id="group-edit-form" class="dialog-shell">
+      <h3>Gruppe bearbeiten</h3>
+      <input type="hidden" name="id" />
+      <label>
+        Name
+        <input name="name" required maxlength="100" />
+      </label>
+      <label>
+        Beschreibung
+        <textarea name="description" rows="3" maxlength="250"></textarea>
+      </label>
+      <label>
+        Reihenfolge
+        <input name="sort_order" type="number" required />
+      </label>
+      <div class="dialog-actions">
+        <button id="group-edit-cancel" type="button" class="ghost">Abbrechen</button>
+        <button type="submit">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="group-export-dialog" class="edit-dialog">
+    <form id="group-export-form" class="dialog-shell">
+      <h3>Gruppe exportieren</h3>
+      <input type="hidden" name="id" />
+      <label>
+        Format
+        <select name="format">
+          <option value="json">JSON</option>
+          <option value="csv">CSV</option>
+          <option value="html">HTML</option>
+        </select>
+      </label>
+      <div class="dialog-actions">
+        <button id="group-export-cancel" type="button" class="ghost">Abbrechen</button>
+        <button type="submit">Exportieren</button>
       </div>
     </form>
   </dialog>
