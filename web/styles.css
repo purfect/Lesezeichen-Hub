@@ -12,6 +12,21 @@
   --ring: rgba(44, 183, 161, 0.34);
 }
 
+:root[data-theme="terminal"] {
+  --bg: #000000;
+  --bg-alt: #050505;
+  --ink: #ededed;
+  --muted: #9a9a9a;
+  --card: rgba(5, 5, 5, 0.96);
+  --card-soft: rgba(10, 10, 10, 0.96);
+  --line: rgba(220, 220, 220, 0.28);
+  --accent: #e8e8e8;
+  --accent-strong: #b8b8b8;
+  --danger: #707070;
+  --ring: rgba(240, 240, 240, 0.26);
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -26,6 +41,18 @@ body {
     radial-gradient(circle at 84% 10%, rgba(63, 107, 199, 0.19), transparent 29%),
     linear-gradient(140deg, var(--bg), var(--bg-alt));
   overflow-x: hidden;
+}
+
+:root[data-theme="terminal"] body {
+  font-family: "Cascadia Mono", "IBM Plex Mono", "Consolas", monospace;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.035) 0, rgba(255, 255, 255, 0.035) 1px, transparent 1px, transparent 4px),
+    linear-gradient(135deg, #000000, #080808);
+  text-shadow: 0 0 5px rgba(255, 255, 255, 0.13);
+}
+
+:root[data-theme="terminal"] .bg-shape {
+  display: none;
 }
 
 .bg-shape {
@@ -976,4 +1003,88 @@ button.danger:hover {
 .metal-footer-link:hover {
   background: rgba(24, 49, 69, 0.95);
   text-decoration: none;
+}
+
+:root[data-theme="terminal"] #search,
+:root[data-theme="terminal"] input,
+:root[data-theme="terminal"] textarea,
+:root[data-theme="terminal"] select,
+:root[data-theme="terminal"] .gear-link,
+:root[data-theme="terminal"] button.ghost,
+:root[data-theme="terminal"] .panel,
+:root[data-theme="terminal"] .favorites-segment,
+:root[data-theme="terminal"] .group-card,
+:root[data-theme="terminal"] .bookmark-item,
+:root[data-theme="terminal"] .edit-dialog,
+:root[data-theme="terminal"] .metal-footer-inner,
+:root[data-theme="terminal"] .notes-sidebar {
+  background: rgba(6, 6, 6, 0.96);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+:root[data-theme="terminal"] button,
+:root[data-theme="terminal"] .add-dialog-tab.active {
+  background: #e8e8e8;
+  border-color: #e8e8e8;
+  color: #050505;
+  text-shadow: none;
+}
+
+:root[data-theme="terminal"] button.danger,
+:root[data-theme="terminal"] .add-dialog-tab {
+  background: #343434;
+  border-color: #707070;
+  color: #f2f2f2;
+}
+
+:root[data-theme="terminal"] .gear-link:hover,
+:root[data-theme="terminal"] button.ghost:hover,
+:root[data-theme="terminal"] .metal-footer-link:hover {
+  background: #222222;
+  transform: none;
+}
+
+:root[data-theme="terminal"] .gear-link,
+:root[data-theme="terminal"] .icon-only {
+  filter: grayscale(1);
+}
+
+:root[data-theme="terminal"] input::placeholder,
+:root[data-theme="terminal"] textarea::placeholder {
+  color: #8f8f8f;
+}
+
+:root[data-theme="terminal"] .bookmark-link,
+:root[data-theme="terminal"] .archive-link-list a,
+:root[data-theme="terminal"] .metal-footer-values strong,
+:root[data-theme="terminal"] .metal-footer-link,
+:root[data-theme="terminal"] .favorite-pill,
+:root[data-theme="terminal"] .reminder-alerts a {
+  color: #f0f0f0;
+}
+
+:root[data-theme="terminal"] .favorite-pill,
+:root[data-theme="terminal"] .tag-chip,
+:root[data-theme="terminal"] .toggle-pin.active,
+:root[data-theme="terminal"] .toggle-favorite.active,
+:root[data-theme="terminal"] .toggle-archive.active {
+  background: #151515;
+  border-color: #8a8a8a;
+  color: #ededed;
+}
+
+:root[data-theme="terminal"] .reminder-alerts,
+:root[data-theme="terminal"] .bookmark-item.is-reminder-alert {
+  background: #111111;
+  border-color: #9a9a9a;
+  box-shadow: none;
+}
+
+:root[data-theme="terminal"] .bookmark-reminder,
+:root[data-theme="terminal"] .bookmark-reminder.is-due,
+:root[data-theme="terminal"] .reminder-alerts-list li,
+:root[data-theme="terminal"] .reminder-alerts-list span,
+:root[data-theme="terminal"] .metal-footer-hint.is-error {
+  color: #c7c7c7;
 }

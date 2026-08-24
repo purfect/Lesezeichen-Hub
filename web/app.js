@@ -38,6 +38,7 @@ const els = {
   groupExportCancel: document.getElementById("group-export-cancel"),
   dataActions: document.getElementById("data-actions"),
   toggleDataActions: document.getElementById("toggle-data-actions"),
+  toggleTheme: document.getElementById("toggle-theme"),
   toggleMetalPrices: document.getElementById("toggle-metal-prices"),
   searchInfo: document.getElementById("search-info"),
   favoritesSegment: document.getElementById("favorites-segment"),
@@ -78,6 +79,7 @@ function init() {
   els.addDialogClose.addEventListener("click", closeAddDialog);
   els.addDialogTabs.forEach((tab) => tab.addEventListener("click", () => selectAddDialogPanel(tab.dataset.addPanel)));
   els.toggleDataActions.addEventListener("click", toggleDataActions);
+  els.toggleTheme.addEventListener("click", toggleTheme);
   els.toggleMetalPrices.addEventListener("click", toggleMetalPricesVisibility);
   els.exportJSON.addEventListener("click", () => onExport("json"));
   els.exportCSV.addEventListener("click", () => onExport("csv"));
@@ -103,7 +105,20 @@ function init() {
 
   updateSearchClearButton();
   syncMetalPricesVisibility();
+  syncThemeToggle();
   loadState();
+}
+
+function syncThemeToggle() {
+  const terminalTheme = window.getLesezeichenTheme?.() === "terminal";
+  els.toggleTheme.textContent = terminalTheme ? "Modernes Design aktivieren" : "ASCII-Monitor aktivieren";
+  els.toggleTheme.setAttribute("aria-pressed", String(terminalTheme));
+}
+
+function toggleTheme() {
+  const nextTheme = window.getLesezeichenTheme?.() === "terminal" ? "modern" : "terminal";
+  window.setLesezeichenTheme?.(nextTheme);
+  syncThemeToggle();
 }
 
 function areMetalPricesVisible() {
