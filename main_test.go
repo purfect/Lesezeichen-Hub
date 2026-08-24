@@ -90,6 +90,37 @@ func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 	}
 }
 
+func TestModuleDirectoryServesIndexFile(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	moduleDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(moduleDir, "index.html"), []byte("<h1>Modul</h1>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Testmodul", moduleDir); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &application{db: db}
+	request := httptest.NewRequest(http.MethodGet, "/modules/1/", nil)
+	response := httptest.NewRecorder()
+	app.handleModuleFiles(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if response.Body.String() != "<h1>Modul</h1>" {
+		t.Errorf("body = %q, want module index", response.Body.String())
+	}
+}
+
 func TestInitializeSchemaEnablesBookmarkStorage(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "data.db")
 	db, err := sql.Open("sqlite", dbPath)

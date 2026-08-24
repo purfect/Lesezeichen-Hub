@@ -399,7 +399,10 @@ func (app *application) handleModuleFiles(w http.ResponseWriter, r *http.Request
 		return
 	}
 	relativePath := path.Clean(path.Join(parts[1:]...))
-	if relativePath == "." || relativePath == ".." || strings.HasPrefix(relativePath, "../") || path.IsAbs(relativePath) {
+	if relativePath == "." {
+		relativePath = "index.html"
+	}
+	if relativePath == ".." || strings.HasPrefix(relativePath, "../") || path.IsAbs(relativePath) {
 		http.NotFound(w, r)
 		return
 	}
