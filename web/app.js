@@ -1075,12 +1075,13 @@ function shouldShowBookmark(bookmark) {
 function matchesSearch(...parts) {
   if (!state.search) return true;
   const haystack = parts.join(" ").toLowerCase();
-  return haystack.includes(state.search);
+  const searchTerms = state.search.split(/\s+/).filter(Boolean);
+  return searchTerms.every((term) => haystack.includes(term));
 }
 
 function updateSearchInfo(groupCount, matchCount, archivedMatchCount = 0) {
   if (!state.search) {
-    els.searchInfo.textContent = "Suche in Titeln, URLs, Notizen und Gruppen.";
+    els.searchInfo.textContent = "Suche in Titeln, URLs, Notizen und Gruppen. Mehrere Begriffe werden kombiniert.";
     return;
   }
 
