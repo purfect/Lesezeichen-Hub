@@ -183,7 +183,7 @@ func main() {
 	dbPath := envOrDefault("BOOKMARK_DB_PATH", "./data.db")
 	addr := envOrDefault("ADDR", "127.0.0.1:2222")
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", databaseDSN(dbPath))
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
@@ -407,10 +407,27 @@ func (app *application) handleModuleFiles(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	fullPath := filepath.Join(rootPath, filepath.FromSlash(relativePath))
+	if info, err := os.Stat(fullPath); err == nil && info.IsDir() {
+		fullPath = filepath.Join(fullPath, "index.html")
+	}
+	file, err := os.Open(fullPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+
 	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
-	http.ServeFile(w, r, filepath.Join(rootPath, filepath.FromSlash(relativePath)))
+	// ServeContent statt ServeFile: ServeFile beantwortet .../index.html mit einem 301, den Browser dauerhaft zwischenspeichern.
+	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 
 func initializeSchema(db *sql.DB) error {
@@ -489,7 +506,20 @@ func initializeSchema(db *sql.DB) error {
 		return err
 	}
 
+	// Ohne aktive Fremdschluessel liess das Loeschen einer Gruppe deren Lesezeichen unsichtbar zurueck.
+	if _, err := db.Exec(`DELETE FROM bookmarks WHERE group_id NOT IN (SELECT id FROM groups)`); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// PRAGMA-Einstellungen gelten pro Verbindung und muessen daher aus der DSN kommen.
+func databaseDSN(path string) string {
+	if strings.Contains(path, "?") {
+		return path + "&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	}
+	return path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 }
 
 func (app *application) handleState(w http.ResponseWriter, r *http.Request) {
