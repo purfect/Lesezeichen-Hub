@@ -436,10 +436,21 @@ h1 {
   padding: 6px 10px;
   font-size: 0.85rem;
   white-space: nowrap;
+  cursor: grab;
 }
 
 .favorite-pill:hover {
   background: rgba(27, 62, 94, 0.9);
+}
+
+.favorite-pill.dragging {
+  cursor: grabbing;
+  opacity: 0.45;
+}
+
+.favorite-pill.drop-target {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--ring);
 }
 
 .favorite-pill.is-pinned {
@@ -1242,6 +1253,18 @@ button.danger:hover {
   background: #151515;
   border-color: #8a8a8a;
   color: #ededed;
+}
+
+:root[data-theme="terminal"] .favorite-pill.dragging {
+  background: #2a2a2a;
+  border-color: #f0f0f0;
+  opacity: 0.45;
+}
+
+:root[data-theme="terminal"] .favorite-pill.drop-target {
+  background: #303030;
+  border-color: #ffffff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.45);
 }
 
 :root[data-theme="terminal"] .reminder-alerts,
