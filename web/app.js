@@ -1,6 +1,7 @@
 const state = {
   groups: [],
   noteCounts: {},
+  update: null,
   search: "",
   includeArchivedInSearch: false,
   filters: { groupId: 0, tag: "", favorite: false, pinned: false, due: false },
@@ -18,6 +19,7 @@ const metalPricesVisibleKey = "lsz_metal_prices_visible";
 const savedViewsKey = "lsz_saved_views";
 const favoritesQuickbarOrderKey = "lsz_favorites_quickbar_order";
 let pendingRestorePayload = null;
+let updateProgressTimer = null;
 
 const els = {
   groups: document.getElementById("groups"),
@@ -60,6 +62,13 @@ const els = {
   backupFull: document.getElementById("backup-full"),
   restoreFull: document.getElementById("restore-full"),
   restoreFile: document.getElementById("restore-file"),
+  checkUpdate: document.getElementById("check-update"),
+  installUpdate: document.getElementById("install-update"),
+  updateInfo: document.getElementById("update-info"),
+  updateDetail: document.getElementById("update-detail"),
+  updateProgressWrap: document.getElementById("update-progress-wrap"),
+  updateProgress: document.getElementById("update-progress"),
+  updateProgressText: document.getElementById("update-progress-text"),
   restoreDialog: document.getElementById("restore-dialog"),
   restoreForm: document.getElementById("restore-form"),
   restoreDialogClose: document.getElementById("restore-dialog-close"),
@@ -115,6 +124,8 @@ function init() {
   els.backupFull.addEventListener("click", onBackupFull);
   els.restoreFull.addEventListener("click", () => { els.restoreFile.value = ""; els.restoreFile.click(); });
   els.restoreFile.addEventListener("change", onRestoreFileSelected);
+  els.checkUpdate.addEventListener("click", () => checkForUpdate(true));
+  els.installUpdate.addEventListener("click", onInstallUpdate);
   els.restoreForm.addEventListener("submit", onApplyRestore);
   els.restoreDialogClose.addEventListener("click", closeRestoreDialog);
   els.restoreCancel.addEventListener("click", closeRestoreDialog);
@@ -145,6 +156,7 @@ function init() {
   syncMetalPricesVisibility();
   syncThemeToggle();
   loadState();
+  loadVersionInfo();
 }
 
 function syncThemeToggle() {
@@ -487,6 +499,154 @@ async function onApplyRestore(event) {
 function closeRestoreDialog() {
   if (els.restoreDialog.open) els.restoreDialog.close();
   pendingRestorePayload = null;
+}
+
+async function loadVersionInfo() {
+  try {
+    const config = await request("/api/config");
+    els.updateInfo.textContent = `Version ${config.version || "dev"}`;
+    els.updateDetail.textContent = "Bereit für GitHub Release-Check.";
+  } catch {
+    els.updateInfo.textContent = "Version unbekannt";
+    els.updateDetail.textContent = "Konfiguration konnte nicht geladen werden.";
+  }
+}
+
+async function checkForUpdate(showHint = true) {
+  try {
+    if (showHint) setStatus("Update wird geprüft...");
+    els.checkUpdate.disabled = true;
+    const info = await request("/api/update/check");
+    state.update = info;
+    renderUpdateInfo(info);
+
+    if (showHint) {
+      setStatus(info.update_available ? `Version ${info.latest_version} ist verfügbar.` : "Du nutzt die aktuelle Version.");
+    }
+  } catch (error) {
+    state.update = null;
+    els.installUpdate.classList.add("hidden");
+    els.updateInfo.textContent = "Update-Check nicht möglich";
+    els.updateDetail.textContent = "GitHub konnte nicht abgefragt werden.";
+    if (showHint) setStatus(error.message || "Update-Check fehlgeschlagen.", true);
+  } finally {
+    els.checkUpdate.disabled = false;
+  }
+}
+
+function renderUpdateInfo(info) {
+  const current = info.current_version || "dev";
+  hideUpdateProgress();
+  if (!info.update_available) {
+    els.updateInfo.textContent = `Version ${current}`;
+    els.updateDetail.textContent = "Keine neue Version verfügbar.";
+    els.installUpdate.classList.add("hidden");
+    return;
+  }
+
+  els.updateInfo.textContent = `Version ${current} -> ${info.latest_version}`;
+  els.updateDetail.textContent = info.can_install
+    ? `Release-Asset: ${info.asset_name || "Windows-EXE"}`
+    : (info.message || "Update kann hier nicht installiert werden.");
+  els.installUpdate.classList.toggle("hidden", !info.can_install);
+  els.installUpdate.disabled = !info.can_install;
+  els.installUpdate.title = info.can_install ? `Installiert ${info.latest_version}` : els.updateDetail.textContent;
+}
+
+async function onInstallUpdate() {
+  const info = state.update;
+  if (!info?.update_available) {
+    setStatus("Bitte zuerst nach Updates suchen.", true);
+    return;
+  }
+  if (!info.can_install) {
+    setStatus(info.message || "Dieses Update kann hier nicht installiert werden.", true);
+    return;
+  }
+
+  const message = `Version ${info.latest_version} herunterladen und installieren?\n\nDer Hub wird kurz beendet, ersetzt und neu gestartet.`;
+  if (!confirm(message)) return;
+
+  try {
+    els.installUpdate.disabled = true;
+    els.checkUpdate.disabled = true;
+    startUpdateProgress(`Version ${info.latest_version} wird vorbereitet...`);
+    setStatus(`Version ${info.latest_version} wird heruntergeladen und installiert...`);
+    setUpdateProgress(18, "GitHub Release wird geprüft...");
+    await request("/api/update/install", { method: "POST" });
+    setUpdateProgress(72, "Download abgeschlossen. Updater wurde gestartet...");
+    setStatus("Update startet. Diese Seite wird gleich neu verbunden...");
+    await waitForUpdatedHub(info.latest_version);
+  } catch (error) {
+    stopUpdateProgressTimer();
+    els.installUpdate.disabled = false;
+    els.checkUpdate.disabled = false;
+    setUpdateProgress(100, error.message || "Update-Installation fehlgeschlagen.", true);
+    setStatus(error.message || "Update-Installation fehlgeschlagen.", true);
+  }
+}
+
+function startUpdateProgress(message) {
+  els.updateProgressWrap.classList.remove("hidden");
+  setUpdateProgress(8, message);
+  stopUpdateProgressTimer();
+  updateProgressTimer = setInterval(() => {
+    const currentValue = Number(els.updateProgress.value || 0);
+    const nextValue = Math.min(68, currentValue + 1);
+    setUpdateProgress(nextValue, "Download und Installation laufen...");
+  }, 1000);
+}
+
+function stopUpdateProgressTimer() {
+  if (updateProgressTimer) {
+    clearInterval(updateProgressTimer);
+    updateProgressTimer = null;
+  }
+}
+
+function setUpdateProgress(value, message, isError = false) {
+  els.updateProgress.value = Math.max(0, Math.min(100, value));
+  els.updateProgressText.textContent = message;
+  els.updateProgressWrap.classList.toggle("is-error", isError);
+}
+
+function hideUpdateProgress() {
+  stopUpdateProgressTimer();
+  els.updateProgress.value = 0;
+  els.updateProgressText.textContent = "Bereit.";
+  els.updateProgressWrap.classList.add("hidden");
+  els.updateProgressWrap.classList.remove("is-error");
+}
+
+async function waitForUpdatedHub(latestVersion) {
+  stopUpdateProgressTimer();
+  let sawOffline = false;
+  setUpdateProgress(82, "Hub wird beendet und ersetzt...");
+
+  for (let attempt = 0; attempt < 90; attempt++) {
+    await sleep(1000);
+    try {
+      const response = await fetch("/api/config", { cache: "no-store" });
+      if (!response.ok) throw new Error(`Status ${response.status}`);
+      const config = await response.json();
+      if (sawOffline || config.version === latestVersion) {
+        setUpdateProgress(100, `Update abgeschlossen. Neue Version: ${config.version || latestVersion}.`);
+        setStatus("Update abgeschlossen. Seite wird neu geladen...");
+        setTimeout(() => location.reload(), 1200);
+        return;
+      }
+      setUpdateProgress(86, "Updater wartet auf Neustart...");
+    } catch {
+      sawOffline = true;
+      setUpdateProgress(90, "Hub startet neu...");
+    }
+  }
+
+  setUpdateProgress(100, "Updater gestartet. Bitte Seite in einigen Sekunden neu laden.", true);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseCSVImport(rawCSV) {

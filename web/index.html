@@ -63,6 +63,20 @@
             <button id="delete-view" class="ghost" type="button" disabled>Ansicht löschen</button>
           </div>
         </section>
+        <section class="update-bar" aria-label="Programmupdate">
+          <div>
+            <strong id="update-info">Version wird geladen...</strong>
+            <span id="update-detail">GitHub Release-Check</span>
+            <div id="update-progress-wrap" class="update-progress hidden" aria-live="polite">
+              <progress id="update-progress" max="100" value="0"></progress>
+              <span id="update-progress-text">Bereit.</span>
+            </div>
+          </div>
+          <div class="update-actions">
+            <button id="check-update" class="ghost" type="button">Update prüfen</button>
+            <button id="install-update" class="ghost hidden" type="button">Update installieren</button>
+          </div>
+        </section>
         <div id="data-actions" class="panel-actions">
           <button id="export-json" class="ghost" type="button">Export JSON</button>
           <button id="export-csv" class="ghost" type="button">Export CSV</button>

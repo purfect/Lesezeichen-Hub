@@ -161,6 +161,23 @@ git push origin 1.0.0
 Asset-Name:
 
 - Lesezeichen-Hub_<Versionstag>.exe
+- Lesezeichen-Hub_<Versionstag>.exe.sha256
+
+### Update aus dem Hub
+
+Der Hub kennt seine Version aus dem Release-Tag. Der GitHub-Workflow setzt sie beim Build mit `-X main.appVersion=<Tag>`.
+
+In der Verwaltungsleiste kann der Hub nach Updates suchen. Dabei wird das neueste GitHub Release unter `purfect/Lesezeichen-Hub` abgefragt. Ist eine neue Version verfuegbar, kann sie nach Bestaetigung heruntergeladen und installiert werden.
+
+Ablauf:
+
+1. Neue EXE aus dem Release herunterladen
+2. SHA256-Datei pruefen, falls sie im Release vorhanden ist
+3. laufende EXE stoppen
+4. alte EXE durch die neue ersetzen
+5. Hub mit derselben Adresse wieder starten
+
+Die Update-Installation funktioniert nur unter Windows aus einer laufenden `.exe`. Beim Start per `go run .` ist nur die Update-Pruefung sinnvoll.
 
 ## Daten und Dateien
 

@@ -16,6 +16,33 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func openTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+
+	dbPath := filepath.Join(testTempDir(t), "test.db")
+	db, err := sql.Open("sqlite", databaseDSN(dbPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func testTempDir(t *testing.T) string {
+	t.Helper()
+
+	root := filepath.Join(".runtime", "testdata")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(root, strings.NewReplacer("\\", "_", "/", "_", " ", "_").Replace(t.Name())+"-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestValidateURL(t *testing.T) {
 	tests := []struct {
 		value string
@@ -56,11 +83,7 @@ func TestNormalizeBookmarkURL(t *testing.T) {
 }
 
 func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
 		t.Fatal(err)
 	}
@@ -110,16 +133,12 @@ func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 }
 
 func TestModuleDirectoryServesIndexFile(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
 		t.Fatal(err)
 	}
 
-	moduleDir := t.TempDir()
+	moduleDir := testTempDir(t)
 	if err := os.WriteFile(filepath.Join(moduleDir, "index.html"), []byte("<h1>Modul</h1>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -141,16 +160,12 @@ func TestModuleDirectoryServesIndexFile(t *testing.T) {
 }
 
 func TestModuleIndexURLIsServedWithoutRedirect(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
 		t.Fatal(err)
 	}
 
-	moduleDir := t.TempDir()
+	moduleDir := testTempDir(t)
 	indexPath := filepath.Join(moduleDir, "index.html")
 	if err := os.WriteFile(indexPath, []byte("<h1>Version 1</h1>"), 0o600); err != nil {
 		t.Fatal(err)
@@ -179,16 +194,12 @@ func TestModuleIndexURLIsServedWithoutRedirect(t *testing.T) {
 }
 
 func TestModuleFileChangesAreServedImmediately(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
 		t.Fatal(err)
 	}
 
-	moduleDir := t.TempDir()
+	moduleDir := testTempDir(t)
 	indexPath := filepath.Join(moduleDir, "index.html")
 	if err := os.WriteFile(indexPath, []byte("<h1>Version 1</h1>"), 0o600); err != nil {
 		t.Fatal(err)
@@ -216,20 +227,16 @@ func TestModuleFileChangesAreServedImmediately(t *testing.T) {
 }
 
 func TestModuleFilesRejectSymlinkOutsideRoot(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
 		t.Fatal(err)
 	}
 
-	moduleDir := t.TempDir()
+	moduleDir := testTempDir(t)
 	if err := os.WriteFile(filepath.Join(moduleDir, "index.html"), []byte("<h1>Modul</h1>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	outsideDir := t.TempDir()
+	outsideDir := testTempDir(t)
 	outsideFile := filepath.Join(outsideDir, "secret.txt")
 	if err := os.WriteFile(outsideFile, []byte("nicht ausliefern"), 0o600); err != nil {
 		t.Fatal(err)
@@ -252,15 +259,11 @@ func TestModuleFilesRejectSymlinkOutsideRoot(t *testing.T) {
 }
 
 func TestModuleCanBeUpdatedAndDeletedCompletely(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
 		t.Fatal(err)
 	}
-	moduleDir := t.TempDir()
+	moduleDir := testTempDir(t)
 	if err := os.WriteFile(filepath.Join(moduleDir, "index.html"), []byte("<h1>Modul</h1>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -350,6 +353,42 @@ func TestMetalPricesAreUnavailableWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestIsNewerVersion(t *testing.T) {
+	tests := []struct {
+		current string
+		latest  string
+		want    bool
+	}{
+		{"2.6", "2.7", true},
+		{"2.7", "2.7", false},
+		{"2.10", "2.9", false},
+		{"v2.6.1", "2.7.0", true},
+		{"dev", "2.7", true},
+		{"2.7", "", false},
+	}
+
+	for _, test := range tests {
+		if got := isNewerVersion(test.current, test.latest); got != test.want {
+			t.Errorf("isNewerVersion(%q, %q) = %t, want %t", test.current, test.latest, got, test.want)
+		}
+	}
+}
+
+func TestFindReleaseAssetPrefersExactVersionedExe(t *testing.T) {
+	release := githubRelease{
+		TagName: "2.7",
+		Assets: []githubReleaseAsset{
+			{Name: "Lesezeichen-Hub_2.6.exe", BrowserDownloadURL: "old"},
+			{Name: "Lesezeichen-Hub_2.7.exe", BrowserDownloadURL: "new"},
+		},
+	}
+
+	asset := findReleaseAsset(release, "2.7")
+	if asset.BrowserDownloadURL != "new" {
+		t.Errorf("findReleaseAsset() = %q, want exact release asset", asset.BrowserDownloadURL)
+	}
+}
+
 func TestDeletingGroupCascadesToItsBookmarks(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "data.db")
 	db, err := sql.Open("sqlite", databaseDSN(dbPath))
@@ -427,11 +466,7 @@ func TestInitializeSchemaRemovesOrphanedBookmarks(t *testing.T) {
 }
 
 func TestRestorePreviewDoesNotWriteData(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
 		t.Fatal(err)
 	}
@@ -455,11 +490,7 @@ func TestRestorePreviewDoesNotWriteData(t *testing.T) {
 }
 
 func TestRestoreRejectsUnsafeURL(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
 		t.Fatal(err)
 	}
