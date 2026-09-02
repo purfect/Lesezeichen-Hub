@@ -2376,7 +2376,6 @@ func normalizeBookmarkURL(raw string) string {
 	if (u.Scheme == "http" && u.Port() == "80") || (u.Scheme == "https" && u.Port() == "443") {
 		u.Host = u.Hostname()
 	}
-	u.Fragment = ""
 	if u.Path == "" {
 		u.Path = "/"
 	}
