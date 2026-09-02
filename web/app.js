@@ -40,6 +40,7 @@ const els = {
   groupExportDialog: document.getElementById("group-export-dialog"),
   groupExportForm: document.getElementById("group-export-form"),
   groupExportCancel: document.getElementById("group-export-cancel"),
+  managementPanel: document.getElementById("management-panel"),
   dataActions: document.getElementById("data-actions"),
   toggleDataActions: document.getElementById("toggle-data-actions"),
   toggleTheme: document.getElementById("toggle-theme"),
@@ -223,7 +224,7 @@ function selectAddDialogPanel(panel) {
 }
 
 function toggleDataActions() {
-  const isHidden = els.dataActions.classList.toggle("hidden");
+  const isHidden = els.managementPanel.classList.toggle("hidden");
   els.toggleDataActions.setAttribute("aria-expanded", String(!isHidden));
 }
 

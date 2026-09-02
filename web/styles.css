@@ -142,7 +142,6 @@ body {
 }
 
 .filter-bar {
-  margin: 8px clamp(16px, 3vw, 36px) 0;
   padding: 12px;
   display: grid;
   gap: 10px;
@@ -150,6 +149,13 @@ body {
   border-radius: 14px;
   background: rgba(13, 22, 36, 0.88);
 }
+
+.management-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.management-panel.hidden { display: none; }
 
 .filter-controls,
 .saved-view-controls {
@@ -515,10 +521,6 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: rgba(11, 22, 35, 0.54);
-}
-
-#data-actions.hidden {
-  display: none;
 }
 
 label {
