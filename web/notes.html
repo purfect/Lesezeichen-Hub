@@ -72,6 +72,26 @@
 
     .btn-new-note:hover { filter: brightness(1.12); }
 
+    .btn-bookmark-notes {
+      width: 100%;
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-weight: 600;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+    }
+
+    .btn-bookmark-notes:hover,
+    .btn-bookmark-notes.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(44, 183, 161, 0.1);
+    }
+
     .notes-list {
       flex: 1;
       overflow-y: auto;
@@ -471,6 +491,7 @@
           <input id="notes-search" class="notes-search" type="search" placeholder="Suche in Notizen..." autocomplete="off" />
           <button id="notes-search-clear" class="search-clear hidden" type="button" aria-label="Suche leeren">X</button>
         </div>
+        <button id="btn-bookmark-notes" class="btn-bookmark-notes" type="button" aria-pressed="false">Lesezeichen-Notizen</button>
         <button id="btn-new-note" class="btn-new-note" type="button">+ Neue Notiz</button>
       </div>
       <div id="notes-list" class="notes-list">
