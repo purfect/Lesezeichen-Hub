@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lesezeichen Hub</title>
   <script src="/static/theme.js"></script>
+  <script src="/static/navigation.js" defer></script>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -13,7 +14,7 @@
 
   <header class="topbar">
     <div>
-      <p class="eyebrow">Persoenlicher Browser Hub</p>
+      <p class="eyebrow">Persönlicher Browser Hub</p>
       <h1>Lesezeichen</h1>
       <p id="search-info" class="search-info">Suche in Titeln, URLs, Notizen und Gruppen. Mehrere Begriffe werden kombiniert.</p>
     </div>
@@ -25,18 +26,6 @@
           <input id="search-archive" type="checkbox" /> Archiv durchsuchen
         </label>
       </div>
-      <a class="gear-link" href="/static/overview.html" aria-label="Zur Uebersicht">
-        &#128161;
-      </a>
-      <a class="gear-link" href="/static/archive.html" aria-label="Zum Archiv">
-        &#128450;
-      </a>
-      <a class="gear-link" href="/static/stats.html" aria-label="Zu den Statistiken" title="Statistiken">
-        &#128200;
-      </a>
-      <a class="gear-link" href="/static/notes.html" aria-label="Zu den Notizen" title="Notizen">
-        &#128221;
-      </a>
     </div>
   </header>
 
@@ -53,26 +42,44 @@
       <div class="panel-head">
         <h2>Gruppen</h2>
         <div class="panel-actions">
-          <button id="open-add-dialog" type="button" title="Hinzufuegen">Hinzufuegen</button>
+          <button id="open-add-dialog" type="button" title="Hinzufügen">Hinzufügen</button>
           <button id="toggle-data-actions" class="ghost" type="button" aria-expanded="false">Verwalten</button>
         </div>
       </div>
-      <div id="data-actions" class="panel-actions hidden">
-        <button id="export-json" class="ghost" type="button">Export JSON</button>
-        <button id="export-csv" class="ghost" type="button">Export CSV</button>
-        <button id="export-html" class="ghost" type="button">Export HTML</button>
-        <button id="import-data" class="ghost" type="button">Import</button>
-        <button id="backup-full" class="ghost" type="button" title="Vollsicherung inkl. Notizen">Vollsicherung</button>
-        <button id="restore-full" class="ghost" type="button" title="Vollsicherung wiederherstellen">Wiederherstellen</button>
-        <button id="toggle-metal-prices" class="ghost" type="button" aria-pressed="true">Edelmetallpreise ausblenden</button>
-        <button id="toggle-theme" class="ghost" type="button" aria-pressed="false">ASCII-Monitor aktivieren</button>
-        <button id="reload" class="ghost" type="button">Neu laden</button>
-        <input id="import-data-file" type="file" accept="application/json,.json,text/csv,.csv,text/html,.html,.htm" class="hidden" />
-        <input id="restore-file" type="file" accept="application/json,.json" class="hidden" />
+      <div id="management-panel" class="management-panel hidden">
+        <section class="filter-bar" aria-label="Schnellfilter und gespeicherte Ansichten">
+          <div class="filter-controls">
+            <select id="filter-group" aria-label="Nach Gruppe filtern"><option value="">Alle Gruppen</option></select>
+            <select id="filter-tag" aria-label="Nach Tag filtern"><option value="">Alle Tags</option></select>
+            <button id="filter-favorite" class="ghost filter-toggle" type="button" aria-pressed="false">★ Favoriten</button>
+            <button id="filter-pinned" class="ghost filter-toggle" type="button" aria-pressed="false">📌 Angepinnt</button>
+            <button id="filter-due" class="ghost filter-toggle" type="button" aria-pressed="false">◷ Fällig</button>
+            <button id="filter-reset" class="ghost" type="button">Filter löschen</button>
+          </div>
+          <div class="saved-view-controls">
+            <select id="saved-view" aria-label="Gespeicherte Ansicht"><option value="">Gespeicherte Ansichten</option></select>
+            <input id="saved-view-name" maxlength="60" placeholder="Ansicht benennen" aria-label="Name der neuen Ansicht" />
+            <button id="save-view" type="button">Ansicht speichern</button>
+            <button id="delete-view" class="ghost" type="button" disabled>Ansicht löschen</button>
+          </div>
+        </section>
+        <div id="data-actions" class="panel-actions">
+          <button id="export-json" class="ghost" type="button">Export JSON</button>
+          <button id="export-csv" class="ghost" type="button">Export CSV</button>
+          <button id="export-html" class="ghost" type="button">Export HTML</button>
+          <button id="import-data" class="ghost" type="button">Import</button>
+          <button id="backup-full" class="ghost" type="button" title="Vollsicherung inkl. Notizen">Vollsicherung</button>
+          <button id="restore-full" class="ghost" type="button" title="Vollsicherung wiederherstellen">Wiederherstellen</button>
+          <button id="toggle-metal-prices" class="ghost" type="button" aria-pressed="true">Edelmetallpreise ausblenden</button>
+          <button id="toggle-theme" class="ghost" type="button" aria-pressed="false">ASCII-Monitor aktivieren</button>
+          <button id="reload" class="ghost" type="button">Neu laden</button>
+          <input id="import-data-file" type="file" accept="application/json,.json,text/csv,.csv,text/html,.html,.htm" class="hidden" />
+          <input id="restore-file" type="file" accept="application/json,.json" class="hidden" />
+        </div>
       </div>
       <div id="reminder-alerts-block" class="reminder-alerts hidden" aria-live="polite">
-        <h3>Wiedervorlage bald/faellig</h3>
-        <p class="search-info">Alle Lesezeichen mit Datum bis in 3 Tagen oder bereits ueberschritten.</p>
+        <h3>Wiedervorlage bald/fällig</h3>
+        <p class="search-info">Alle Lesezeichen mit Datum bis in 3 Tagen oder bereits überschritten.</p>
         <ul id="reminder-alerts-list" class="reminder-alerts-list"></ul>
       </div>
       <div id="groups" class="group-grid"></div>
@@ -82,8 +89,8 @@
   <dialog id="add-dialog" class="edit-dialog">
     <div class="dialog-shell">
       <div class="dialog-heading">
-        <h2>Hinzufuegen</h2>
-        <button id="add-dialog-close" class="ghost icon-only" type="button" aria-label="Dialog schliessen">X</button>
+        <h2>Hinzufügen</h2>
+        <button id="add-dialog-close" class="ghost icon-only" type="button" aria-label="Dialog schließen">X</button>
       </div>
       <div class="add-dialog-tabs" role="tablist" aria-label="Art des neuen Eintrags">
         <button class="add-dialog-tab active" type="button" data-add-panel="bookmark" role="tab" aria-selected="true">Lesezeichen</button>
@@ -160,7 +167,7 @@
             Lokaler Ordner
             <span class="path-picker">
               <input required name="path" placeholder="C:\\Projekte\\werkplan" />
-              <button id="choose-module-path" class="ghost" type="button">Ordner waehlen</button>
+              <button id="choose-module-path" class="ghost" type="button">Ordner wählen</button>
             </span>
           </label>
           <label>
@@ -188,7 +195,7 @@
           <button class="ghost collapse-group" type="button" aria-expanded="true">Zuklappen</button>
           <button class="ghost share-group icon-only" type="button" title="Gruppe exportieren" aria-label="Gruppe exportieren">↗</button>
           <button class="ghost edit-group icon-only" type="button" title="Gruppe bearbeiten" aria-label="Gruppe bearbeiten">⚙</button>
-          <button class="danger delete-group icon-only" type="button" aria-label="Gruppe loeschen">X</button>
+          <button class="danger delete-group icon-only" type="button" aria-label="Gruppe löschen">X</button>
         </div>
       </div>
 
@@ -214,7 +221,7 @@
         <button class="ghost toggle-archive icon-only" type="button" title="Archivieren" aria-label="Archivieren">🗃</button>
         <button class="ghost add-note icon-only" type="button" title="Notiz anlegen" aria-label="Notiz anlegen">&#128221;</button>
         <button class="ghost edit-bookmark icon-only" type="button" title="Bearbeiten" aria-label="Bearbeiten">⚙</button>
-        <button class="danger delete-bookmark icon-only" type="button" aria-label="Lesezeichen loeschen">X</button>
+        <button class="danger delete-bookmark icon-only" type="button" aria-label="Lesezeichen löschen">X</button>
       </div>
     </li>
   </template>
@@ -298,6 +305,31 @@
       <div class="dialog-actions">
         <button id="group-export-cancel" type="button" class="ghost">Abbrechen</button>
         <button type="submit">Exportieren</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="restore-dialog" class="edit-dialog">
+    <form id="restore-form" class="dialog-shell">
+      <div class="dialog-heading">
+        <h2>Wiederherstellung prüfen</h2>
+        <button id="restore-dialog-close" class="ghost icon-only" type="button" aria-label="Dialog schließen">X</button>
+      </div>
+      <p id="restore-file-name" class="search-info"></p>
+      <div id="restore-preview" class="restore-preview" aria-live="polite"></div>
+      <label>
+        Bei Konflikten
+        <select id="restore-conflicts" name="conflicts">
+          <option value="overwrite">Vorhandene Einträge überschreiben</option>
+          <option value="skip">Vorhandene Einträge überspringen</option>
+        </select>
+      </label>
+      <label class="inline-check">
+        <input id="restore-backup-first" type="checkbox" checked /> Vorher automatisch eine Vollsicherung herunterladen
+      </label>
+      <div class="dialog-actions">
+        <button id="restore-cancel" class="ghost" type="button">Abbrechen</button>
+        <button id="restore-apply" type="submit">Sicher wiederherstellen</button>
       </div>
     </form>
   </dialog>

@@ -32,8 +32,9 @@ function renderArchive(groups) {
   els.archiveGroups.innerHTML = "";
 
   if (groupedArchive.length === 0) {
-    const empty = document.createElement("p");
-    empty.textContent = "Aktuell sind keine Lesezeichen archiviert.";
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.innerHTML = '<p>Aktuell sind keine Lesezeichen archiviert.</p><a class="primary-link" href="/">Lesezeichen verwalten</a>';
     els.archiveGroups.appendChild(empty);
     return;
   }

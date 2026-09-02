@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lesezeichen – Notizen</title>
   <script src="/static/theme.js"></script>
+  <script src="/static/navigation.js" defer></script>
   <link rel="stylesheet" href="/static/styles.css" />
   <style>
     .notes-layout {
@@ -184,6 +185,8 @@
       flex-shrink: 0;
     }
 
+    .notes-detail-head.hidden { display: none; }
+
     .notes-detail-body {
       flex: 1;
       overflow-y: auto;
@@ -322,6 +325,8 @@
       letter-spacing: 0.06em;
     }
 
+    #vault-password-wrap.hidden { display: none; }
+
     .note-editor input,
     .note-editor select,
     .note-editor textarea {
@@ -452,12 +457,9 @@
 
   <header class="topbar">
     <div>
-      <p class="eyebrow">Persoenlicher Browser Hub</p>
+      <p class="eyebrow">Persönlicher Browser Hub</p>
       <h1>Notizen <span id="notes-title-count" style="font-size:0.7em;color:var(--muted);font-weight:400;margin-left:8px"></span></h1>
       <p class="search-info">Codeschnipsel, Anmerkungen und Notizen zu Lesezeichen.</p>
-    </div>
-    <div class="topbar-actions">
-      <a class="gear-link" href="/" aria-label="Zur Startseite" title="Startseite">&#127968;</a>
     </div>
   </header>
 
@@ -483,13 +485,13 @@
         <div class="notes-detail-actions">
           <button id="btn-copy" class="btn-copy btn-edit" type="button">Kopieren</button>
           <button id="btn-edit" class="btn-edit" type="button">Bearbeiten</button>
-          <button id="btn-delete" class="btn-delete" type="button">Loeschen</button>
+          <button id="btn-delete" class="btn-delete" type="button">Löschen</button>
         </div>
       </div>
       <div id="notes-detail-body" class="notes-detail-body">
         <div class="notes-placeholder">
           <div class="notes-placeholder-icon">&#128221;</div>
-          <p>Waehle eine Notiz aus oder lege eine neue an.</p>
+          <p>Wähle eine Notiz aus oder lege eine neue an.</p>
         </div>
       </div>
     </section>

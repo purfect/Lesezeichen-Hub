@@ -104,6 +104,15 @@ type note struct {
 	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
 }
 
+type localModule struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	URL       string `json:"url"`
+	Available bool   `json:"available"`
+	Error     string `json:"error,omitempty"`
+}
+
 type apiError struct {
 	Error string `json:"error"`
 }
@@ -176,6 +185,18 @@ type backupNote struct {
 	Tags        []string `json:"tags"`
 }
 
+type restorePreview struct {
+	Valid                bool     `json:"valid"`
+	Errors               []string `json:"errors"`
+	NewGroups            int      `json:"new_groups"`
+	ExistingGroups       int      `json:"existing_groups"`
+	NewBookmarks         int      `json:"new_bookmarks"`
+	ConflictingBookmarks int      `json:"conflicting_bookmarks"`
+	NewNotes             int      `json:"new_notes"`
+	ConflictingNotes     int      `json:"conflicting_notes"`
+	Conflicts            []string `json:"conflicts"`
+}
+
 //go:embed web/*
 var embeddedWebFiles embed.FS
 
@@ -183,7 +204,7 @@ func main() {
 	dbPath := envOrDefault("BOOKMARK_DB_PATH", "./data.db")
 	addr := envOrDefault("ADDR", "127.0.0.1:2222")
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", databaseDSN(dbPath))
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
@@ -222,6 +243,7 @@ func main() {
 	mux.HandleFunc("/api/notes", app.handleNotes)
 	mux.HandleFunc("/api/notes/", app.handleNoteRoutes)
 	mux.HandleFunc("/api/modules", app.handleModules)
+	mux.HandleFunc("/api/modules/", app.handleModuleRoutes)
 	mux.HandleFunc("/api/module-folder", app.handleModuleFolder)
 	mux.HandleFunc("/modules/", app.handleModuleFiles)
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
@@ -253,6 +275,10 @@ func main() {
 }
 
 func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		app.listModules(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
 		return
@@ -275,18 +301,9 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("gruppe, name und pfad sind erforderlich"))
 		return
 	}
-	rootPath, err := filepath.Abs(rootPath)
+	rootPath, err := resolveModuleRoot(rootPath)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("pfad ist ungueltig"))
-		return
-	}
-	info, err := os.Stat(rootPath)
-	if err != nil || !info.IsDir() {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("modulpfad ist kein vorhandener ordner"))
-		return
-	}
-	if _, err := os.Stat(filepath.Join(rootPath, "index.html")); err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("modul braucht eine index.html"))
+		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -363,6 +380,147 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"id": moduleID, "url": moduleURL})
 }
 
+func (app *application) listModules(w http.ResponseWriter, r *http.Request) {
+	rows, err := app.db.QueryContext(r.Context(), `SELECT id, name, root_path FROM modules ORDER BY lower(name), id`)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer rows.Close()
+
+	modules := make([]localModule, 0)
+	for rows.Next() {
+		var item localModule
+		if err := rows.Scan(&item.ID, &item.Name, &item.Path); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		item.URL = fmt.Sprintf("/modules/%d/index.html", item.ID)
+		if _, err := resolveModuleRoot(item.Path); err != nil {
+			item.Error = err.Error()
+		} else {
+			item.Available = true
+		}
+		modules = append(modules, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"modules": modules})
+}
+
+func (app *application) handleModuleRoutes(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/modules/"), "/")
+	moduleID, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || moduleID <= 0 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungültige modul-id"))
+		return
+	}
+
+	moduleURL := fmt.Sprintf("/modules/%d/index.html", moduleID)
+	switch r.Method {
+	case http.MethodPut:
+		var payload struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungültiges JSON"))
+			return
+		}
+		name := strings.TrimSpace(payload.Name)
+		if name == "" {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("name ist erforderlich"))
+			return
+		}
+		rootPath, err := resolveModuleRoot(payload.Path)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+
+		tx, err := app.db.BeginTx(r.Context(), nil)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer tx.Rollback()
+		result, err := tx.ExecContext(r.Context(), `UPDATE modules SET name = ?, root_path = ? WHERE id = ?`, name, rootPath, moduleID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("modul nicht gefunden"))
+			return
+		}
+		if _, err := tx.ExecContext(r.Context(), `UPDATE bookmarks SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE url = ?`, name, moduleURL); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": rootPath})
+	case http.MethodDelete:
+		rows, err := app.db.QueryContext(r.Context(), `SELECT id FROM bookmarks WHERE url = ?`, moduleURL)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		bookmarkIDs := make([]int64, 0)
+		for rows.Next() {
+			var bookmarkID int64
+			if err := rows.Scan(&bookmarkID); err != nil {
+				rows.Close()
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			bookmarkIDs = append(bookmarkIDs, bookmarkID)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		rows.Close()
+
+		tx, err := app.db.BeginTx(r.Context(), nil)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(r.Context(), `DELETE FROM bookmarks WHERE url = ?`, moduleURL); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		result, err := tx.ExecContext(r.Context(), `DELETE FROM modules WHERE id = ?`, moduleID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("modul nicht gefunden"))
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		for _, bookmarkID := range bookmarkIDs {
+			app.removeBookmarkFromNotes(r.Context(), bookmarkID)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	default:
+		methodNotAllowed(w)
+	}
+}
+
 func (app *application) handleModuleFolder(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -407,10 +565,67 @@ func (app *application) handleModuleFiles(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	fullPath, err := resolveModuleFile(rootPath, relativePath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	file, err := os.Open(fullPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+
 	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
-	http.ServeFile(w, r, filepath.Join(rootPath, filepath.FromSlash(relativePath)))
+	// ServeContent statt ServeFile: ServeFile beantwortet .../index.html mit einem 301, den Browser dauerhaft zwischenspeichern.
+	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
+}
+
+func resolveModuleRoot(rootPath string) (string, error) {
+	absolutePath, err := filepath.Abs(strings.TrimSpace(rootPath))
+	if err != nil {
+		return "", fmt.Errorf("pfad ist ungültig")
+	}
+	canonicalPath, err := filepath.EvalSymlinks(absolutePath)
+	if err != nil {
+		return "", fmt.Errorf("modulpfad ist kein vorhandener ordner")
+	}
+	info, err := os.Stat(canonicalPath)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("modulpfad ist kein vorhandener ordner")
+	}
+	if indexInfo, err := os.Stat(filepath.Join(canonicalPath, "index.html")); err != nil || indexInfo.IsDir() {
+		return "", fmt.Errorf("modul braucht eine index.html")
+	}
+	return canonicalPath, nil
+}
+
+func resolveModuleFile(rootPath, relativePath string) (string, error) {
+	canonicalRoot, err := resolveModuleRoot(rootPath)
+	if err != nil {
+		return "", err
+	}
+	candidate := filepath.Join(canonicalRoot, filepath.FromSlash(relativePath))
+	if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+		candidate = filepath.Join(candidate, "index.html")
+	}
+	canonicalCandidate, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", err
+	}
+	relativeToRoot, err := filepath.Rel(canonicalRoot, canonicalCandidate)
+	if err != nil || relativeToRoot == ".." || strings.HasPrefix(relativeToRoot, ".."+string(filepath.Separator)) || filepath.IsAbs(relativeToRoot) {
+		return "", fmt.Errorf("moduldatei liegt außerhalb des modulordners")
+	}
+	return canonicalCandidate, nil
 }
 
 func initializeSchema(db *sql.DB) error {
@@ -489,7 +704,20 @@ func initializeSchema(db *sql.DB) error {
 		return err
 	}
 
+	// Ohne aktive Fremdschluessel liess das Loeschen einer Gruppe deren Lesezeichen unsichtbar zurueck.
+	if _, err := db.Exec(`DELETE FROM bookmarks WHERE group_id NOT IN (SELECT id FROM groups)`); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// PRAGMA-Einstellungen gelten pro Verbindung und muessen daher aus der DSN kommen.
+func databaseDSN(path string) string {
+	if strings.Contains(path, "?") {
+		return path + "&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	}
+	return path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 }
 
 func (app *application) handleState(w http.ResponseWriter, r *http.Request) {
@@ -893,6 +1121,27 @@ func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("unbekannte backup-version: %d", payload.Version))
 		return
 	}
+	preview, err := app.buildRestorePreview(r.Context(), payload)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if r.URL.Query().Get("preview") == "1" {
+		writeJSON(w, http.StatusOK, preview)
+		return
+	}
+	if !preview.Valid {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("backup ist ungültig: %s", strings.Join(preview.Errors, "; ")))
+		return
+	}
+	conflictStrategy := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("conflicts")))
+	if conflictStrategy == "" {
+		conflictStrategy = "overwrite"
+	}
+	if conflictStrategy != "overwrite" && conflictStrategy != "skip" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungültige konfliktstrategie"))
+		return
+	}
 
 	tx, err := app.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -932,7 +1181,7 @@ func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
 		} else if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
-		} else {
+		} else if conflictStrategy == "overwrite" {
 			_, _ = tx.ExecContext(r.Context(),
 				`UPDATE groups SET description = ?, sort_order = ? WHERE id = ?`,
 				strings.TrimSpace(g.Description), g.SortOrder, groupID)
@@ -965,7 +1214,7 @@ func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
 			} else if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
-			} else {
+			} else if conflictStrategy == "overwrite" {
 				_, _ = tx.ExecContext(r.Context(),
 					`UPDATE bookmarks SET title = ?, notes = ?, tags = ?, favorite = ?, pinned = ?, archived = ?, sort_order = ?, remind_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 					title, b.Notes, tagsRaw,
@@ -1016,7 +1265,7 @@ func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
 		} else if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
-		} else {
+		} else if conflictStrategy == "overwrite" {
 			_, _ = tx.ExecContext(r.Context(),
 				`UPDATE notes SET content = ?, type = ?, bookmark_ids = ?, tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 				strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw, existingID)
@@ -1037,7 +1286,76 @@ func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
 		"updated_bookmarks": updatedBookmarks,
 		"created_notes":     createdNotes,
 		"updated_notes":     updatedNotes,
+		"conflict_strategy": conflictStrategy,
 	})
+}
+
+func (app *application) buildRestorePreview(ctx context.Context, payload backupPayload) (restorePreview, error) {
+	preview := restorePreview{Valid: true, Errors: make([]string, 0), Conflicts: make([]string, 0)}
+	for groupIndex, backupGroup := range payload.Groups {
+		groupName := strings.TrimSpace(backupGroup.Name)
+		if groupName == "" {
+			preview.Errors = append(preview.Errors, fmt.Sprintf("Gruppe %d hat keinen Namen", groupIndex+1))
+			continue
+		}
+
+		var groupID int64
+		err := app.db.QueryRowContext(ctx, `SELECT id FROM groups WHERE lower(name) = lower(?) LIMIT 1`, groupName).Scan(&groupID)
+		groupExists := err == nil
+		if errors.Is(err, sql.ErrNoRows) {
+			preview.NewGroups++
+		} else if err != nil {
+			return preview, err
+		} else {
+			preview.ExistingGroups++
+			preview.Conflicts = append(preview.Conflicts, fmt.Sprintf("Gruppe: %s", groupName))
+		}
+
+		for bookmarkIndex, backupBookmark := range backupGroup.Bookmarks {
+			title := strings.TrimSpace(backupBookmark.Title)
+			urlValue := strings.TrimSpace(backupBookmark.URL)
+			if title == "" {
+				preview.Errors = append(preview.Errors, fmt.Sprintf("Lesezeichen %d in %s hat keinen Titel", bookmarkIndex+1, groupName))
+			}
+			if err := validateURL(urlValue); err != nil {
+				preview.Errors = append(preview.Errors, fmt.Sprintf("Lesezeichen %q in %s: %v", title, groupName, err))
+			}
+			if !groupExists || title == "" || urlValue == "" {
+				preview.NewBookmarks++
+				continue
+			}
+			var bookmarkID int64
+			err := app.db.QueryRowContext(ctx, `SELECT id FROM bookmarks WHERE group_id = ? AND url = ? LIMIT 1`, groupID, urlValue).Scan(&bookmarkID)
+			if errors.Is(err, sql.ErrNoRows) {
+				preview.NewBookmarks++
+			} else if err != nil {
+				return preview, err
+			} else {
+				preview.ConflictingBookmarks++
+				preview.Conflicts = append(preview.Conflicts, fmt.Sprintf("Lesezeichen: %s / %s", groupName, title))
+			}
+		}
+	}
+
+	for noteIndex, backupNote := range payload.Notes {
+		title := strings.TrimSpace(backupNote.Title)
+		if title == "" {
+			preview.Errors = append(preview.Errors, fmt.Sprintf("Notiz %d hat keinen Titel", noteIndex+1))
+			continue
+		}
+		var noteID int64
+		err := app.db.QueryRowContext(ctx, `SELECT id FROM notes WHERE title = ? LIMIT 1`, title).Scan(&noteID)
+		if errors.Is(err, sql.ErrNoRows) {
+			preview.NewNotes++
+		} else if err != nil {
+			return preview, err
+		} else {
+			preview.ConflictingNotes++
+			preview.Conflicts = append(preview.Conflicts, fmt.Sprintf("Notiz: %s", title))
+		}
+	}
+	preview.Valid = len(preview.Errors) == 0
+	return preview, nil
 }
 
 func (app *application) handleGroups(w http.ResponseWriter, r *http.Request) {
@@ -2452,6 +2770,10 @@ func (app *application) removeBookmarkFromNotes(ctx context.Context, bookmarkID 
 			}
 		}
 		updates = append(updates, noteUpdate{id: nid, ids: serializeBookmarkIDs(filtered)})
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("removeBookmarkFromNotes: %v", err)
+		return
 	}
 	rows.Close()
 	for _, u := range updates {

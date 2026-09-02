@@ -11,13 +11,13 @@ init();
 
 async function init() {
   try {
-    setStatus("Lade Uebersicht...");
+    setStatus("Lade Übersicht...");
     const payload = await request("/api/state");
     const groups = payload.groups || [];
     renderOverview(groups);
     setStatus("Bereit.");
   } catch (error) {
-    setStatus(error.message || "Fehler beim Laden der Uebersicht.", true);
+    setStatus(error.message || "Fehler beim Laden der Übersicht.", true);
   }
 }
 
@@ -49,7 +49,7 @@ function renderOverview(groups) {
     { label: "Angepinnt", value: pinned },
     { label: "Mit Notiz", value: withNotes },
     { label: "Mit Datum", value: reminders.length },
-    { label: "Bald/faellig", value: dueSoon },
+    { label: "Bald/fällig", value: dueSoon },
     { label: "Tags gesamt", value: uniqueTagCount },
   ];
 
@@ -88,7 +88,7 @@ function renderLargestGroups(groups) {
 
   if (largest.length === 0) {
     const li = document.createElement("li");
-    li.textContent = "Noch keine Gruppen vorhanden.";
+    li.innerHTML = 'Noch keine Gruppen vorhanden. <a href="/?add=group">Erste Gruppe anlegen</a>';
     els.largestGroups.appendChild(li);
     return;
   }
@@ -117,7 +117,7 @@ function renderTopTags(allTags) {
 
   if (top.length === 0) {
     const li = document.createElement("li");
-    li.textContent = "Noch keine Tags vorhanden.";
+    li.innerHTML = 'Noch keine Tags vorhanden. <a href="/?add=bookmark">Lesezeichen hinzufügen</a>';
     els.topTags.appendChild(li);
     return;
   }
@@ -135,7 +135,7 @@ function renderRemindersSummary(total, dueSoon, overdue) {
   const entries = [
     `Gesamt mit Datum: ${total}`,
     `Bald oder heute: ${Math.max(0, dueSoon - overdue)}`,
-    `Ueberfaellig: ${overdue}`,
+    `Überfällig: ${overdue}`,
   ];
 
   for (const entry of entries) {

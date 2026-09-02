@@ -31,7 +31,7 @@ async function init() {
     renderNoteStats(noteStats);
 
     els.clearHistory.addEventListener("click", () => {
-      if (!confirm("Suchverlauf wirklich loeschen?")) return;
+      if (!confirm("Suchverlauf wirklich löschen?")) return;
       localStorage.removeItem("lsz_search_history");
       renderSearchHistory();
     });
@@ -59,8 +59,8 @@ function renderSearchHistory() {
 
   if (history.length === 0) {
     els.searchHistorySummary.textContent = "Noch keine Suchen aufgezeichnet. Suche auf der Startseite, um Daten zu erzeugen.";
-    els.searchHistoryChart.innerHTML = '<p class="search-info" style="padding:8px 0;">Keine Daten vorhanden.</p>';
-    els.allSearches.innerHTML = '<li>Kein Verlauf vorhanden.</li>';
+    els.searchHistoryChart.innerHTML = '<div class="empty-state"><p>Keine Daten vorhanden.</p><a class="primary-link" href="/">Suche verwenden</a></div>';
+    els.allSearches.innerHTML = '<li>Kein Verlauf vorhanden. <a href="/">Zur Suche</a></li>';
     return;
   }
 
@@ -102,7 +102,7 @@ function renderGroupsChart(groups) {
 
   if (items.length === 0) {
     els.groupsSummary.textContent = "Noch keine Lesezeichen vorhanden.";
-    els.groupsChart.innerHTML = '<p class="search-info" style="padding:8px 0;">Keine Daten vorhanden.</p>';
+    els.groupsChart.innerHTML = '<div class="empty-state"><p>Keine Daten vorhanden.</p><a class="primary-link" href="/?add=bookmark">Lesezeichen hinzufügen</a></div>';
     return;
   }
 
@@ -129,8 +129,8 @@ function renderNoteStats(noteStats) {
   els.notesSummary.textContent = `Insgesamt ${total} Notiz${total !== 1 ? "en" : ""}.`;
 
   els.noteTypes.innerHTML = "";
-  const typeLabels = { note: "Notiz", code: "Code-Schnipsel", annotation: "Anmerkung" };
-  const typeOrder = ["note", "code", "annotation"];
+  const typeLabels = { note: "Notiz", code: "Code-Schnipsel", annotation: "Anmerkung", vault: "Vault" };
+  const typeOrder = ["note", "code", "annotation", "vault"];
   for (const type of typeOrder) {
     const count = types[type] || 0;
     if (count > 0) {
@@ -141,14 +141,14 @@ function renderNoteStats(noteStats) {
   }
   if (els.noteTypes.innerHTML === "") {
     const li = document.createElement("li");
-    li.textContent = "Keine Notizen vorhanden.";
+    li.innerHTML = 'Keine Notizen vorhanden. <a href="/static/notes.html?new=1">Notiz anlegen</a>';
     els.noteTypes.appendChild(li);
   }
 
   els.topNoteTags.innerHTML = "";
   if (topTags.length === 0) {
     const li = document.createElement("li");
-    li.textContent = "Keine Tags vorhanden.";
+    li.innerHTML = 'Keine Tags vorhanden. <a href="/static/notes.html?new=1">Notiz anlegen</a>';
     els.topNoteTags.appendChild(li);
   } else {
     for (const item of topTags) {
@@ -184,7 +184,7 @@ function renderTopTags(groups) {
 
   if (top.length === 0) {
     const li = document.createElement("li");
-    li.textContent = "Noch keine Tags vorhanden.";
+    li.innerHTML = 'Noch keine Tags vorhanden. <a href="/?add=bookmark">Lesezeichen hinzufügen</a>';
     els.topTags.appendChild(li);
     return;
   }
