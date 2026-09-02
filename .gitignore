@@ -1,5 +1,6 @@
 Lesezeichen-Hub.exe
 *.exe
+*.exe~
 .data/
 data.db
 data.db-shm

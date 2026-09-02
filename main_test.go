@@ -327,7 +327,7 @@ func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
 
 	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case strings.HasPrefix(r.URL.Path, "/orgs/Lesezeichen-Hub/repos"):
+		case r.URL.Path == "/orgs/Lesezeichen-Hub/repos":
 			writeJSON(w, http.StatusOK, []githubRepository{{
 				Name:          "Beispiel-Modul",
 				Description:   "Ein Testmodul",
@@ -390,6 +390,45 @@ func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Dir(rootPath)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("verwalteter Modulordner wurde nicht entfernt: %v", err)
+	}
+}
+
+func TestModuleCatalogFallsBackWhenGithubRateLimitIsExhausted(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES('Gorilla', 'C:\missing')`); err != nil {
+		t.Fatal(err)
+	}
+
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/orgs/Lesezeichen-Hub/repos":
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			writeErr(w, http.StatusForbidden, errors.New("API rate limit exceeded"))
+		case r.URL.Path == "/orgs/Lesezeichen-Hub/repositories":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<a href="/Lesezeichen-Hub/Gorilla">Gorilla</a><a href="/Lesezeichen-Hub/NAT_Rechner">NAT Rechner</a>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer github.Close()
+
+	app := &application{db: db, moduleAPIBase: github.URL, moduleWebBase: github.URL}
+	modules, err := app.fetchModuleCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modules) != 2 {
+		t.Fatalf("modules = %+v, want 2 entries", modules)
+	}
+	if !modules[0].Installed || modules[0].Name != "Gorilla" {
+		t.Fatalf("installed module = %+v", modules[0])
+	}
+	if modules[1].Name != "NAT_Rechner" || modules[1].DefaultBranch != "main" {
+		t.Fatalf("fallback module = %+v", modules[1])
 	}
 }
 

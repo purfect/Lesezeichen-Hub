@@ -38,6 +38,7 @@ const (
 	githubRepo        = "Lesezeichen-Hub"
 	moduleGithubOwner = "Lesezeichen-Hub"
 	githubAPIBase     = "https://api.github.com"
+	githubWebBase     = "https://github.com"
 )
 
 var appVersion = "dev"
@@ -46,6 +47,7 @@ type application struct {
 	db               *sql.DB
 	webFS            fs.FS
 	moduleAPIBase    string
+	moduleWebBase    string
 	moduleInstallDir string
 	externalPrices   bool
 	metalPricesMu    sync.RWMutex
@@ -273,6 +275,7 @@ func main() {
 	app := &application{
 		db:               db,
 		moduleAPIBase:    githubAPIBase,
+		moduleWebBase:    githubWebBase,
 		moduleInstallDir: envOrDefault("MODULES_PATH", "./modules"),
 		externalPrices:   envBool("ENABLE_EXTERNAL_PRICES", true),
 	}
@@ -522,17 +525,23 @@ func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("modulkatalog konnte nicht geladen werden: %w", err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub antwortet mit Status %d", response.StatusCode)
-	}
-
 	var repositories []githubRepository
-	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&repositories); err != nil {
+	if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests {
+		repositories, err = app.fetchModuleRepositoriesFromWeb(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("GitHub-API-Limit erreicht und Ersatzliste konnte nicht geladen werden: %w", err)
+		}
+	} else if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub antwortet mit Status %d", response.StatusCode)
+	} else if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&repositories); err != nil {
 		return nil, fmt.Errorf("ungueltige GitHub-Antwort: %w", err)
 	}
 	installed := make(map[string]localModule)
@@ -572,6 +581,49 @@ func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule
 	}
 	sort.Slice(modules, func(i, j int) bool { return strings.ToLower(modules[i].Name) < strings.ToLower(modules[j].Name) })
 	return modules, nil
+}
+
+func (app *application) fetchModuleRepositoriesFromWeb(ctx context.Context) ([]githubRepository, error) {
+	webBase := strings.TrimRight(app.moduleWebBase, "/")
+	if webBase == "" {
+		webBase = githubWebBase
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, webBase+"/orgs/"+moduleGithubOwner+"/repositories?type=all", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub-Webseite antwortet mit Status %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	pattern := regexp.MustCompile(`href="/` + regexp.QuoteMeta(moduleGithubOwner) + `/([A-Za-z0-9_.-]+)"`)
+	seen := make(map[string]bool)
+	repositories := make([]githubRepository, 0)
+	for _, match := range pattern.FindAllSubmatch(body, -1) {
+		name := string(match[1])
+		if seen[strings.ToLower(name)] {
+			continue
+		}
+		seen[strings.ToLower(name)] = true
+		repositories = append(repositories, githubRepository{
+			Name:          name,
+			HTMLURL:       webBase + "/" + moduleGithubOwner + "/" + name,
+			DefaultBranch: "main",
+		})
+	}
+	if len(repositories) == 0 {
+		return nil, fmt.Errorf("keine Repositorys gefunden")
+	}
+	return repositories, nil
 }
 
 func (app *application) installCatalogModule(ctx context.Context, repositoryName string) (catalogModule, error) {
@@ -616,11 +668,12 @@ func (app *application) installCatalogModule(ctx context.Context, repositoryName
 	archivePath := archive.Name()
 	archive.Close()
 	defer os.Remove(archivePath)
-	apiBase := strings.TrimRight(app.moduleAPIBase, "/")
-	if apiBase == "" {
-		apiBase = githubAPIBase
+	archiveURL := ""
+	if strings.TrimSpace(app.moduleAPIBase) != "" && !strings.EqualFold(strings.TrimRight(app.moduleAPIBase, "/"), githubAPIBase) {
+		archiveURL = fmt.Sprintf("%s/repos/%s/%s/zipball/%s", strings.TrimRight(app.moduleAPIBase, "/"), moduleGithubOwner, url.PathEscape(selected.Name), url.PathEscape(selected.DefaultBranch))
+	} else {
+		archiveURL = fmt.Sprintf("%s/archive/refs/heads/%s.zip", strings.TrimRight(selected.RepositoryURL, "/"), url.PathEscape(selected.DefaultBranch))
 	}
-	archiveURL := fmt.Sprintf("%s/repos/%s/%s/zipball/%s", apiBase, moduleGithubOwner, url.PathEscape(selected.Name), url.PathEscape(selected.DefaultBranch))
 	if err := downloadFile(ctx, archiveURL, archivePath); err != nil {
 		return catalogModule{}, err
 	}
