@@ -564,7 +564,7 @@ func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule
 
 	modules := make([]catalogModule, 0, len(repositories))
 	for _, repository := range repositories {
-		if repository.Archived || repository.Fork || repository.Name == "" || repository.DefaultBranch == "" {
+		if repository.Archived || repository.Fork || repository.Name == "" || strings.HasPrefix(repository.Name, ".") || repository.DefaultBranch == "" {
 			continue
 		}
 		module := catalogModule{

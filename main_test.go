@@ -328,12 +328,20 @@ func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
 	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/orgs/Lesezeichen-Hub/repos":
-			writeJSON(w, http.StatusOK, []githubRepository{{
-				Name:          "Beispiel-Modul",
-				Description:   "Ein Testmodul",
-				HTMLURL:       "https://github.com/Lesezeichen-Hub/Beispiel-Modul",
-				DefaultBranch: "main",
-			}})
+			writeJSON(w, http.StatusOK, []githubRepository{
+				{
+					Name:          "Beispiel-Modul",
+					Description:   "Ein Testmodul",
+					HTMLURL:       "https://github.com/Lesezeichen-Hub/Beispiel-Modul",
+					DefaultBranch: "main",
+				},
+				{
+					Name:          ".github",
+					Description:   "Organisationsprofil",
+					HTMLURL:       "https://github.com/Lesezeichen-Hub/.github",
+					DefaultBranch: "main",
+				},
+			})
 		case r.URL.Path == "/repos/Lesezeichen-Hub/Beispiel-Modul/zipball/main":
 			w.Header().Set("Content-Type", "application/zip")
 			_, _ = w.Write(archive.Bytes())
@@ -502,7 +510,7 @@ func TestModuleCatalogFallsBackWhenGithubRateLimitIsExhausted(t *testing.T) {
 			writeErr(w, http.StatusForbidden, errors.New("API rate limit exceeded"))
 		case r.URL.Path == "/orgs/Lesezeichen-Hub/repositories":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(`<a href="/Lesezeichen-Hub/Gorilla">Gorilla</a><a href="/Lesezeichen-Hub/NAT_Rechner">NAT Rechner</a>`))
+			_, _ = w.Write([]byte(`<a href="/Lesezeichen-Hub/.github">.github</a><a href="/Lesezeichen-Hub/Gorilla">Gorilla</a><a href="/Lesezeichen-Hub/NAT_Rechner">NAT Rechner</a>`))
 		default:
 			http.NotFound(w, r)
 		}
