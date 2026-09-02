@@ -3,6 +3,8 @@ const state = {
   noteCounts: {},
   search: "",
   includeArchivedInSearch: false,
+  filters: { groupId: 0, tag: "", favorite: false, pinned: false, due: false },
+  savedViews: loadSavedViews(),
   collapsedGroupIds: loadCollapsedGroupIds(),
   drag: {
     groupId: null,
@@ -12,6 +14,8 @@ const state = {
 };
 
 const metalPricesVisibleKey = "lsz_metal_prices_visible";
+const savedViewsKey = "lsz_saved_views";
+let pendingRestorePayload = null;
 
 const els = {
   groups: document.getElementById("groups"),
@@ -53,6 +57,25 @@ const els = {
   backupFull: document.getElementById("backup-full"),
   restoreFull: document.getElementById("restore-full"),
   restoreFile: document.getElementById("restore-file"),
+  restoreDialog: document.getElementById("restore-dialog"),
+  restoreForm: document.getElementById("restore-form"),
+  restoreDialogClose: document.getElementById("restore-dialog-close"),
+  restoreCancel: document.getElementById("restore-cancel"),
+  restoreApply: document.getElementById("restore-apply"),
+  restorePreview: document.getElementById("restore-preview"),
+  restoreFileName: document.getElementById("restore-file-name"),
+  restoreConflicts: document.getElementById("restore-conflicts"),
+  restoreBackupFirst: document.getElementById("restore-backup-first"),
+  filterGroup: document.getElementById("filter-group"),
+  filterTag: document.getElementById("filter-tag"),
+  filterFavorite: document.getElementById("filter-favorite"),
+  filterPinned: document.getElementById("filter-pinned"),
+  filterDue: document.getElementById("filter-due"),
+  filterReset: document.getElementById("filter-reset"),
+  savedView: document.getElementById("saved-view"),
+  savedViewName: document.getElementById("saved-view-name"),
+  saveView: document.getElementById("save-view"),
+  deleteView: document.getElementById("delete-view"),
   reminderAlertsBlock: document.getElementById("reminder-alerts-block"),
   reminderAlertsList: document.getElementById("reminder-alerts-list"),
   status: document.getElementById("status"),
@@ -89,6 +112,18 @@ function init() {
   els.backupFull.addEventListener("click", onBackupFull);
   els.restoreFull.addEventListener("click", () => { els.restoreFile.value = ""; els.restoreFile.click(); });
   els.restoreFile.addEventListener("change", onRestoreFileSelected);
+  els.restoreForm.addEventListener("submit", onApplyRestore);
+  els.restoreDialogClose.addEventListener("click", closeRestoreDialog);
+  els.restoreCancel.addEventListener("click", closeRestoreDialog);
+  els.filterGroup.addEventListener("change", onFiltersChanged);
+  els.filterTag.addEventListener("change", onFiltersChanged);
+  els.filterFavorite.addEventListener("click", () => toggleQuickFilter("favorite"));
+  els.filterPinned.addEventListener("click", () => toggleQuickFilter("pinned"));
+  els.filterDue.addEventListener("click", () => toggleQuickFilter("due"));
+  els.filterReset.addEventListener("click", resetFilters);
+  els.saveView.addEventListener("click", saveCurrentView);
+  els.savedView.addEventListener("change", applySelectedView);
+  els.deleteView.addEventListener("click", deleteSelectedView);
   els.reload.addEventListener("click", () => loadState(true));
   els.search.addEventListener("input", (e) => {
     state.search = e.target.value.trim().toLowerCase();
@@ -357,24 +392,7 @@ function parseImportPayload(file, rawText) {
 
 async function onBackupFull() {
   try {
-    setStatus("Vollsicherung wird erstellt...");
-    const response = await fetch("/api/backup");
-    if (!response.ok) throw new Error(`Fehler (${response.status})`);
-
-    const blob = await response.blob();
-    const cd = response.headers.get("content-disposition") || "";
-    const match = cd.match(/filename="([^"]+)"/);
-    const fileName = match?.[1] || `lesezeichen-vollsicherung-${Date.now()}.json`;
-
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-
+    await downloadFullBackup();
     setStatus("Vollsicherung abgeschlossen.");
   } catch (error) {
     setStatus(error.message || "Vollsicherung fehlgeschlagen.", true);
@@ -390,31 +408,88 @@ async function onRestoreFileSelected(event) {
     const parsed = JSON.parse(rawText);
 
     if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.groups)) {
-      throw new Error("Keine gueltige Vollsicherungsdatei (version 1 erwartet).");
+      throw new Error("Keine gültige Vollsicherungsdatei (Version 1 erwartet).");
     }
 
-    setStatus("Vollsicherung wird eingespielt...");
-    const result = await request("/api/restore", {
+    pendingRestorePayload = parsed;
+    els.restoreFileName.textContent = `Datei: ${file.name}`;
+    els.restorePreview.innerHTML = '<p class="search-info">Sicherung wird geprüft...</p>';
+    els.restoreApply.disabled = true;
+    if (!els.restoreDialog.open) els.restoreDialog.showModal();
+    const preview = await request("/api/restore?preview=1", {
       method: "POST",
       body: JSON.stringify(parsed),
     });
-
-    const { created_groups, created_bookmarks, updated_bookmarks, created_notes, updated_notes } = result;
-    setStatus(
-      `Wiederherstellung abgeschlossen: ${created_groups} Gruppen neu, ` +
-      `${created_bookmarks} Lesezeichen neu, ${updated_bookmarks} aktualisiert, ` +
-      `${created_notes} Notizen neu, ${updated_notes} aktualisiert.`
-    );
-    await loadState(true);
+    renderRestorePreview(preview);
+    els.restoreApply.disabled = !preview.valid;
   } catch (error) {
     setStatus(error.message || "Wiederherstellung fehlgeschlagen.", true);
+    closeRestoreDialog();
   }
+}
+
+async function downloadFullBackup() {
+  setStatus("Vollsicherung wird erstellt...");
+  const response = await fetch("/api/backup");
+  if (!response.ok) throw new Error(`Fehler (${response.status})`);
+  const blob = await response.blob();
+  const cd = response.headers.get("content-disposition") || "";
+  const match = cd.match(/filename="([^"]+)"/);
+  const fileName = match?.[1] || `lesezeichen-vollsicherung-${Date.now()}.json`;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function renderRestorePreview(preview) {
+  const errors = (preview.errors || []).map((message) => `<li>${escapeHTML(message)}</li>`).join("");
+  const conflicts = (preview.conflicts || []).slice(0, 12).map((message) => `<li>${escapeHTML(message)}</li>`).join("");
+  els.restorePreview.innerHTML = `
+    <div class="restore-summary">
+      <strong>${preview.new_groups} neue Gruppen</strong>
+      <strong>${preview.new_bookmarks} neue Lesezeichen</strong>
+      <strong>${preview.new_notes} neue Notizen</strong>
+      <strong>${preview.conflicting_bookmarks + preview.conflicting_notes} Konflikte</strong>
+    </div>
+    ${errors ? `<div class="restore-errors"><strong>Die Sicherung kann nicht eingespielt werden:</strong><ul>${errors}</ul></div>` : ""}
+    ${conflicts ? `<details><summary>Konflikte anzeigen</summary><ul>${conflicts}</ul></details>` : ""}
+  `;
+}
+
+async function onApplyRestore(event) {
+  event.preventDefault();
+  if (!pendingRestorePayload) return;
+  try {
+    els.restoreApply.disabled = true;
+    if (els.restoreBackupFirst.checked) await downloadFullBackup();
+    setStatus("Vollsicherung wird eingespielt...");
+    const result = await request(`/api/restore?conflicts=${encodeURIComponent(els.restoreConflicts.value)}`, {
+      method: "POST",
+      body: JSON.stringify(pendingRestorePayload),
+    });
+    closeRestoreDialog();
+    setStatus(`Wiederherstellung abgeschlossen: ${result.created_groups} Gruppen, ${result.created_bookmarks} Lesezeichen und ${result.created_notes} Notizen neu.`);
+    await loadState(true);
+  } catch (error) {
+    els.restoreApply.disabled = false;
+    setStatus(error.message || "Wiederherstellung fehlgeschlagen.", true);
+  }
+}
+
+function closeRestoreDialog() {
+  if (els.restoreDialog.open) els.restoreDialog.close();
+  pendingRestorePayload = null;
 }
 
 function parseCSVImport(rawCSV) {
   const rows = parseCSVRows(rawCSV).filter((row) => row.some((cell) => String(cell || "").trim() !== ""));
   if (rows.length <= 1) {
-    throw new Error("CSV ist leer oder ungueltig.");
+    throw new Error("CSV ist leer oder ungültig.");
   }
 
   const header = rows[0].map((cell) => String(cell || "").trim().toLowerCase());
@@ -593,7 +668,13 @@ async function loadState(showHint = false) {
     state.groups = payload.groups ?? [];
     state.noteCounts = countPayload.counts || {};
     populateGroupSelect();
+    populateFilterOptions();
     render();
+    const requestedPanel = new URLSearchParams(location.search).get("add");
+    if (["bookmark", "group", "module"].includes(requestedPanel)) {
+      openAddDialog(requestedPanel);
+      history.replaceState(null, "", "/");
+    }
     setStatus(showHint ? "Aktualisiert." : "Bereit.");
   } catch (error) {
     setStatus(error.message, true);
@@ -637,12 +718,12 @@ function populateGroupSelect() {
 
 async function onChooseModulePath() {
   try {
-    setStatus("Ordnerdialog wird geoeffnet...");
+    setStatus("Ordnerdialog wird geöffnet...");
     const result = await request("/api/module-folder");
     if (result?.path) {
       els.moduleForm.elements.namedItem("path").value = result.path;
     }
-    setStatus(result?.path ? "Ordner ausgewaehlt." : "Keine Auswahl getroffen.");
+    setStatus(result?.path ? "Ordner ausgewählt." : "Keine Auswahl getroffen.");
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -678,6 +759,7 @@ function render() {
   let matchCount = 0;
   let archivedMatchCount = 0;
   const filteredGroups = state.groups
+    .filter((group) => !state.filters.groupId || group.id === state.filters.groupId)
     .map((group) => {
       const allBookmarks = group.bookmarks || [];
       const groupMatches = matchesSearch(group.name, group.description);
@@ -691,12 +773,12 @@ function render() {
         bookmarks,
       };
     })
-    .filter((group) => group.bookmarks.length > 0 || !state.search);
+    .filter((group) => group.bookmarks.length > 0 || !hasActiveQuery());
 
   updateSearchInfo(filteredGroups.length, matchCount, archivedMatchCount);
 
   if (filteredGroups.length === 0) {
-    els.groups.innerHTML = `<p>Keine Treffer. Versuche eine andere Suche.</p>`;
+    renderEmptyState();
     return;
   }
 
@@ -753,7 +835,7 @@ function render() {
         const daysUntil = getDaysUntil(remindDate);
         const formatted = remindDate.toLocaleDateString("de-DE");
         if (daysUntil < 0) {
-          reminderNode.textContent = `Wiedervorlage ueberfaellig: ${formatted}`;
+          reminderNode.textContent = `Wiedervorlage überfällig: ${formatted}`;
         } else if (daysUntil <= 3) {
           reminderNode.textContent = `Wiedervorlage bald: ${formatted}`;
         } else {
@@ -896,11 +978,11 @@ function renderReminderAlerts() {
 
     const meta = document.createElement("span");
     if (days < 0) {
-      meta.textContent = `ueberfaellig seit ${Math.abs(days)} Tag(en)`;
+      meta.textContent = `überfällig seit ${Math.abs(days)} Tag(en)`;
     } else if (days === 0) {
-      meta.textContent = "faellig heute";
+      meta.textContent = "fällig heute";
     } else {
-      meta.textContent = `faellig in ${days} Tag(en)`;
+      meta.textContent = `fällig in ${days} Tag(en)`;
     }
 
     li.appendChild(link);
@@ -1068,8 +1150,138 @@ function filterBookmarks(bookmarks) {
 }
 
 function shouldShowBookmark(bookmark) {
-  if (!bookmark.archived) return true;
-  return state.search.length > 0 && state.includeArchivedInSearch;
+  if (bookmark.archived && !(state.search.length > 0 && state.includeArchivedInSearch)) return false;
+  if (state.filters.favorite && !bookmark.favorite) return false;
+  if (state.filters.pinned && !bookmark.pinned) return false;
+  if (state.filters.due && !isBookmarkAlert(bookmark)) return false;
+  if (state.filters.tag && !(bookmark.tags || []).some((tag) => tag.toLowerCase() === state.filters.tag.toLowerCase())) return false;
+  return true;
+}
+
+function hasActiveQuery() {
+  return Boolean(state.search || state.filters.groupId || state.filters.tag || state.filters.favorite || state.filters.pinned || state.filters.due);
+}
+
+function renderEmptyState() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "empty-state";
+  const text = document.createElement("p");
+  const action = document.createElement("button");
+  if (state.groups.length === 0) {
+    text.textContent = "Noch keine Gruppen vorhanden. Lege zuerst einen Bereich für deine Lesezeichen an.";
+    action.textContent = "Erste Gruppe anlegen";
+    action.addEventListener("click", () => openAddDialog("group"));
+  } else {
+    text.textContent = "Für diese Suche und Filter gibt es keine Treffer.";
+    action.textContent = "Suche und Filter zurücksetzen";
+    action.addEventListener("click", resetFilters);
+  }
+  wrapper.append(text, action);
+  els.groups.appendChild(wrapper);
+}
+
+function onFiltersChanged() {
+  state.filters.groupId = Number(els.filterGroup.value || 0);
+  state.filters.tag = els.filterTag.value;
+  render();
+}
+
+function toggleQuickFilter(name) {
+  state.filters[name] = !state.filters[name];
+  syncFilterControls();
+  render();
+}
+
+function resetFilters() {
+  state.search = "";
+  state.includeArchivedInSearch = false;
+  state.filters = { groupId: 0, tag: "", favorite: false, pinned: false, due: false };
+  els.search.value = "";
+  els.searchArchive.checked = false;
+  els.savedView.value = "";
+  syncFilterControls();
+  updateSearchClearButton();
+  render();
+}
+
+function loadSavedViews() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem("lsz_saved_views") || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCurrentView() {
+  const name = els.savedViewName.value.trim();
+  if (!name) {
+    setStatus("Bitte einen Namen für die Ansicht eingeben.", true);
+    els.savedViewName.focus();
+    return;
+  }
+  const view = { name, search: state.search, includeArchived: state.includeArchivedInSearch, filters: { ...state.filters } };
+  const existingIndex = state.savedViews.findIndex((item) => item.name.toLowerCase() === name.toLowerCase());
+  if (existingIndex >= 0) state.savedViews[existingIndex] = view;
+  else state.savedViews.push(view);
+  localStorage.setItem(savedViewsKey, JSON.stringify(state.savedViews));
+  els.savedViewName.value = "";
+  populateSavedViews(name);
+  setStatus(`Ansicht „${name}“ gespeichert.`);
+}
+
+function applySelectedView() {
+  const view = state.savedViews.find((item) => item.name === els.savedView.value);
+  els.deleteView.disabled = !view;
+  if (!view) return;
+  state.search = view.search || "";
+  state.includeArchivedInSearch = Boolean(view.includeArchived);
+  state.filters = { groupId: 0, tag: "", favorite: false, pinned: false, due: false, ...(view.filters || {}) };
+  els.search.value = state.search;
+  els.searchArchive.checked = state.includeArchivedInSearch;
+  syncFilterControls();
+  updateSearchClearButton();
+  render();
+}
+
+function deleteSelectedView() {
+  const name = els.savedView.value;
+  if (!name) return;
+  state.savedViews = state.savedViews.filter((item) => item.name !== name);
+  localStorage.setItem(savedViewsKey, JSON.stringify(state.savedViews));
+  populateSavedViews();
+  setStatus(`Ansicht „${name}“ gelöscht.`);
+}
+
+function populateFilterOptions() {
+  const selectedGroup = state.filters.groupId;
+  const selectedTag = state.filters.tag;
+  els.filterGroup.innerHTML = '<option value="">Alle Gruppen</option>';
+  for (const group of state.groups) els.filterGroup.add(new Option(group.name, String(group.id)));
+  const tags = [...new Set(state.groups.flatMap((group) => group.bookmarks || []).flatMap((bookmark) => bookmark.tags || []))]
+    .sort((a, b) => a.localeCompare(b, "de"));
+  els.filterTag.innerHTML = '<option value="">Alle Tags</option>';
+  for (const tag of tags) els.filterTag.add(new Option(tag, tag));
+  els.filterGroup.value = String(selectedGroup || "");
+  els.filterTag.value = selectedTag;
+  populateSavedViews(els.savedView.value);
+  syncFilterControls();
+}
+
+function populateSavedViews(selected = "") {
+  els.savedView.innerHTML = '<option value="">Gespeicherte Ansichten</option>';
+  for (const view of state.savedViews) els.savedView.add(new Option(view.name, view.name));
+  els.savedView.value = selected;
+  els.deleteView.disabled = !els.savedView.value;
+}
+
+function syncFilterControls() {
+  els.filterGroup.value = String(state.filters.groupId || "");
+  els.filterTag.value = state.filters.tag;
+  for (const [button, name] of [[els.filterFavorite, "favorite"], [els.filterPinned, "pinned"], [els.filterDue, "due"]]) {
+    button.setAttribute("aria-pressed", String(state.filters[name]));
+    button.classList.toggle("active", state.filters[name]);
+  }
 }
 
 function matchesSearch(...parts) {
@@ -1138,7 +1350,7 @@ async function onSaveEditedGroup(event) {
   const id = Number(formData.get("id"));
   const sortOrder = Number(formData.get("sort_order"));
   if (!Number.isFinite(id) || id <= 0 || !Number.isFinite(sortOrder)) {
-    setStatus("Bitte eine gueltige Gruppe und Reihenfolge angeben.", true);
+    setStatus("Bitte eine gültige Gruppe und Reihenfolge angeben.", true);
     return;
   }
 
@@ -1160,10 +1372,10 @@ async function onSaveEditedGroup(event) {
 }
 
 async function onDeleteGroup(group) {
-  if (!confirm(`Gruppe "${group.name}" und alle Lesezeichen wirklich loeschen?`)) return;
+  if (!confirm(`Gruppe "${group.name}" und alle Lesezeichen wirklich löschen?`)) return;
   try {
     await request(`/api/groups/${group.id}`, { method: "DELETE" });
-    setStatus("Gruppe geloescht.");
+    setStatus("Gruppe gelöscht.");
     await loadState();
   } catch (error) {
     setStatus(error.message, true);
@@ -1186,7 +1398,7 @@ async function onExportGroup(event) {
   const id = Number(formData.get("id"));
   const format = String(formData.get("format") || "").toLowerCase();
   if (!Number.isFinite(id) || id <= 0 || !["json", "csv", "html"].includes(format)) {
-    setStatus("Ungueltige Exportauswahl.", true);
+    setStatus("Ungültige Exportauswahl.", true);
     return;
   }
   closeGroupExportDialog();
@@ -1217,7 +1429,7 @@ async function onCreateBookmark(event) {
   };
 
   if (!Number.isFinite(groupID) || groupID <= 0) {
-    setStatus("Bitte eine gueltige Gruppe waehlen.", true);
+    setStatus("Bitte eine gültige Gruppe wählen.", true);
     return;
   }
 
@@ -1294,12 +1506,12 @@ async function onSaveEditedBookmark(event) {
   const groupID = Number(formData.get("group_id"));
 
   if (!Number.isFinite(id) || id <= 0) {
-    setStatus("Ungueltige Lesezeichen-ID.", true);
+    setStatus("Ungültige Lesezeichen-ID.", true);
     return;
   }
 
   if (!Number.isFinite(groupID) || groupID <= 0) {
-    setStatus("Bitte eine gueltige Gruppe waehlen.", true);
+    setStatus("Bitte eine gültige Gruppe wählen.", true);
     return;
   }
 
@@ -1352,11 +1564,11 @@ async function saveBookmark(bookmark, patch, withHint = true) {
 }
 
 async function onDeleteBookmark(bookmark) {
-  if (!confirm(`Lesezeichen "${bookmark.title}" wirklich loeschen?`)) return;
+  if (!confirm(`Lesezeichen "${bookmark.title}" wirklich löschen?`)) return;
 
   try {
     await request(`/api/bookmarks/${bookmark.id}`, { method: "DELETE" });
-    setStatus("Lesezeichen geloescht.");
+    setStatus("Lesezeichen gelöscht.");
     await loadState();
   } catch (error) {
     setStatus(error.message, true);
@@ -1380,6 +1592,14 @@ async function request(path, options = {}) {
   }
 
   return payload;
+}
+
+function escapeHTML(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function setStatus(message, isError = false) {

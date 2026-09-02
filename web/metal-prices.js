@@ -61,7 +61,7 @@ async function loadMetalPrices() {
     const isStale = Boolean(metalPayload.stale);
 
     if (!Number.isFinite(gold) || !Number.isFinite(silver) || !bestProduct || !Number.isFinite(bestPrice) || bestPrice <= 0) {
-      throw new Error("Preiswerte ungueltig");
+      throw new Error("Preiswerte ungültig");
     }
 
     metalPriceEls.gold.textContent = `${formatEURPerGram(gold)} €/g`;
@@ -81,7 +81,7 @@ async function loadMetalPrices() {
     }
 
     if (isStale) {
-      setFooterHint("Hinweis: Letzter gueltiger Cachewert (Quelle temporaer nicht erreichbar).", true);
+      setFooterHint("Hinweis: Letzter gültiger Cachewert (Quelle temporär nicht erreichbar).", true);
     } else {
       setFooterHint("Quellen: scheideanstalt.de (Bankpreis) und edelmetall-handel.de (Top-Angebot). Aktualisierung alle 2 Stunden.");
     }

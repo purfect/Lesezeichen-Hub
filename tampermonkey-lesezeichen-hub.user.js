@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lesezeichen Hub Saver
 // @namespace    https://local.lesezeichen-hub
-// @version      1.0.0
+// @version      1.1.0
 // @description  Speichert die aktuelle Webseite direkt im lokalen Lesezeichen-Hub.
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
@@ -48,43 +48,39 @@
     }
 
     try {
-      const groupsPayload = await requestJson("GET", "/api/groups");
-      const groups = Array.isArray(groupsPayload.groups) ? groupsPayload.groups : [];
+      const statePayload = await requestJson("GET", "/api/state");
+      const groups = Array.isArray(statePayload.groups) ? statePayload.groups : [];
 
       if (groups.length === 0) {
         notifyError("Keine Gruppen gefunden. Bitte zuerst im Hub eine Gruppe anlegen.");
         return;
       }
 
-      const selectedGroup = pickGroup(groups);
-      if (!selectedGroup) {
-        return;
-      }
-
-      const title = askTitle();
-      if (!title) {
-        return;
-      }
-
-      const notes = prompt("Notiz (optional):", "") || "";
-      const tagsInput = prompt("Tags (optional, komma-getrennt):", "") || "";
+      const tagSuggestions = [...new Set(groups
+        .flatMap((group) => group.bookmarks || [])
+        .flatMap((bookmark) => bookmark.tags || [])
+        .map((tag) => String(tag).trim())
+        .filter(Boolean))].sort((a, b) => a.localeCompare(b, "de"));
+      const formData = await showSaveForm(groups, tagSuggestions);
+      if (!formData) return;
 
       const payload = {
-        group_id: selectedGroup.id,
-        title,
+        group_id: formData.groupId,
+        title: formData.title,
         url: window.location.href,
-        notes: notes.trim(),
-        tags: parseTags(tagsInput),
-        favorite: false,
-        pinned: false,
+        notes: formData.notes,
+        tags: parseTags(formData.tags),
+        favorite: formData.favorite,
+        pinned: formData.pinned,
         archived: false,
         sort_order: 0,
         remind_at: "",
       };
 
       await requestJson("POST", "/api/bookmarks", payload);
-      localStorage.setItem(LAST_GROUP_ID_STORAGE_KEY, String(selectedGroup.id));
-      notifySuccess(`Gespeichert in Gruppe: ${selectedGroup.name}`);
+      localStorage.setItem(LAST_GROUP_ID_STORAGE_KEY, String(formData.groupId));
+      const selectedGroup = groups.find((group) => group.id === formData.groupId);
+      notifySuccess(`Gespeichert in Gruppe: ${selectedGroup?.name || "Unbekannt"}`);
     } catch (error) {
       notifyError(error.message || "Speichern fehlgeschlagen.");
     }
@@ -134,52 +130,80 @@
     notifySuccess("Mini-Icon aktiviert.");
   }
 
-  function pickGroup(groups) {
+  function showSaveForm(groups, tagSuggestions) {
     const preferred = Number(localStorage.getItem(LAST_GROUP_ID_STORAGE_KEY) || "0");
-    let defaultIndex = 0;
-
-    if (preferred > 0) {
-      const idx = groups.findIndex((group) => group.id === preferred);
-      if (idx >= 0) {
-        defaultIndex = idx;
-      }
-    }
-
-    const lines = groups.map((group, index) => `${index + 1}) ${group.name}`);
-    const message = [
-      "Gruppe waehlen (Nummer eingeben):",
-      "",
-      ...lines,
-      "",
-      `Standard: ${defaultIndex + 1}`,
-    ].join("\n");
-
-    const raw = prompt(message, String(defaultIndex + 1));
-    if (raw === null) {
-      return null;
-    }
-
-    const selectedIndex = Number(raw.trim()) - 1;
-    if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= groups.length) {
-      notifyError("Ungueltige Auswahl.");
-      return null;
-    }
-
-    return groups[selectedIndex];
-  }
-
-  function askTitle() {
     const fallbackTitle = (document.title || window.location.hostname || "Neues Lesezeichen").trim();
-    const input = prompt("Titel:", fallbackTitle);
-    if (input === null) {
-      return "";
-    }
-    const title = input.trim();
-    if (!title) {
-      notifyError("Titel darf nicht leer sein.");
-      return "";
-    }
-    return title;
+    const host = document.createElement("div");
+    host.id = "lesezeichen-hub-save-dialog";
+    const shadow = host.attachShadow({ mode: "closed" });
+    const groupOptions = groups.map((group, index) => {
+      const selected = group.id === preferred || (!preferred && index === 0) ? " selected" : "";
+      return `<option value="${group.id}"${selected}>${escapeHTML(group.name)}</option>`;
+    }).join("");
+    const tagOptions = tagSuggestions.map((tag) => `<option value="${escapeHTML(tag)}"></option>`).join("");
+    shadow.innerHTML = `
+      <style>
+        :host { all: initial; }
+        .backdrop { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; padding: 16px; background: rgba(5, 12, 20, .68); font-family: "Segoe UI", sans-serif; color: #e8eef7; }
+        form { width: min(440px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; border: 1px solid #365069; border-radius: 10px; background: #101a27; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }
+        header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+        h2 { margin: 0; font-size: 20px; letter-spacing: 0; }
+        label { display: grid; gap: 5px; margin: 10px 0; font-size: 13px; color: #b8c5d8; }
+        input, textarea, select, button { box-sizing: border-box; font: inherit; }
+        input, textarea, select { width: 100%; padding: 9px 10px; border: 1px solid #365069; border-radius: 7px; color: #e8eef7; background: #0a121d; }
+        textarea { min-height: 70px; resize: vertical; }
+        .checks { display: flex; gap: 18px; }
+        .checks label { display: flex; align-items: center; gap: 7px; color: #e8eef7; }
+        .checks input { width: auto; }
+        .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+        button { min-height: 40px; padding: 8px 13px; border: 1px solid #365069; border-radius: 7px; cursor: pointer; color: #e8eef7; background: #18283a; }
+        button[type="submit"] { border-color: #2cb7a1; color: #041512; background: #2cb7a1; font-weight: 700; }
+        .close { width: 40px; padding: 0; font-size: 20px; }
+      </style>
+      <div class="backdrop">
+        <form>
+          <header><h2>Im Lesezeichen-Hub speichern</h2><button class="close" type="button" aria-label="Schließen">×</button></header>
+          <label>Gruppe<select name="group">${groupOptions}</select></label>
+          <label>Titel<input name="title" value="${escapeHTML(fallbackTitle)}" maxlength="120" required /></label>
+          <label>Notiz<textarea name="notes" maxlength="500" placeholder="Optional"></textarea></label>
+          <label>Tags<input name="tags" list="hub-tag-suggestions" placeholder="Kommagetrennt" /><datalist id="hub-tag-suggestions">${tagOptions}</datalist></label>
+          <div class="checks"><label><input name="favorite" type="checkbox" /> Favorit</label><label><input name="pinned" type="checkbox" /> Angepinnt</label></div>
+          <div class="actions"><button class="cancel" type="button">Abbrechen</button><button type="submit">Speichern</button></div>
+        </form>
+      </div>`;
+    document.body.appendChild(host);
+
+    return new Promise((resolve) => {
+      const form = shadow.querySelector("form");
+      const finish = (result) => {
+        document.removeEventListener("keydown", onKeyDown, true);
+        host.remove();
+        resolve(result);
+      };
+      const onKeyDown = (event) => {
+        if (event.key === "Escape") finish(null);
+      };
+      document.addEventListener("keydown", onKeyDown, true);
+      shadow.querySelector(".close").addEventListener("click", () => finish(null));
+      shadow.querySelector(".cancel").addEventListener("click", () => finish(null));
+      shadow.querySelector(".backdrop").addEventListener("click", (event) => {
+        if (event.target.classList.contains("backdrop")) finish(null);
+      });
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const data = new FormData(form);
+        finish({
+          groupId: Number(data.get("group")),
+          title: String(data.get("title") || "").trim(),
+          notes: String(data.get("notes") || "").trim(),
+          tags: String(data.get("tags") || ""),
+          favorite: data.get("favorite") === "on",
+          pinned: data.get("pinned") === "on",
+        });
+      });
+      form.elements.title.focus();
+      form.elements.title.select();
+    });
   }
 
   function parseTags(raw) {
@@ -191,6 +215,14 @@
       .split(",")
       .map((item) => item.trim())
       .filter((item, index, arr) => item.length > 0 && arr.indexOf(item) === index);
+  }
+
+  function escapeHTML(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   function isSupportedPage() {

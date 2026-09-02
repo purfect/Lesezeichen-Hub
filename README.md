@@ -10,6 +10,8 @@ Die Anwendung laeuft komplett lokal, bietet Gruppen, Tags, Favoriten, Wiedervorl
 - Lesezeichen mit Titel, URL, Notiz, Tags und Datum
 - Favoriten und angepinnte Eintraege
 - Suche ueber Titel, URL, Notizen, Tags und Gruppen
+- Schnellfilter fuer Gruppen, Tags, Favoriten, Pins und faellige Wiedervorlagen
+- Gespeicherte Ansichten fuer wiederkehrende Suchen und Filter
 - Drag and Drop Sortierung fuer Gruppen und Lesezeichen
 - Import und Export als JSON, CSV und HTML
 - Lokale SQLite-Datenbank
@@ -44,6 +46,8 @@ http://127.0.0.1:2222
 Für jedes Modul können zusätzlich Notizen und Tags vergeben werden. Da ein Modul als normales Lesezeichen gespeichert wird, erscheint es automatisch in Suche, Favoriten, Tags, Exporten und Notizen. Wird ein Modul archiviert oder sein Lesezeichen gelöscht, kann es mit demselben Namen erneut angelegt werden; verwaiste oder archivierte Moduldefinitionen werden dabei wiederverwendet beziehungsweise reaktiviert.
 
 Die Dateien werden über den Hub unter `/modules/...` ausgeliefert, sodass relative CSS-, JavaScript- und Bildpfade der lokalen Anwendung funktionieren.
+
+Über **Module** in der Hauptnavigation lassen sich registrierte Module prüfen, umbenennen, mit einem neuen Ordner verbinden und vollständig inklusive Start-Lesezeichen löschen. Aufgelöste Symlinks und Windows-Junctions dürfen den registrierten Modulordner bei der Dateiauslieferung nicht verlassen.
 
 Der Server muss lokal unter Windows laufen und Zugriff auf den angegebenen Ordner haben. Änderungen an den Moduldateien werden beim nächsten Aufruf direkt verwendet.
 
@@ -87,6 +91,7 @@ Nutzung:
 Hinweise:
 
 - Das Script fragt erst Gruppe, Titel, Notiz und Tags ab und sendet dann an /api/bookmarks.
+- Der Speicherdialog merkt die zuletzt verwendete Gruppe und bietet bereits verwendete Tags als Vorschläge an.
 - Wenn noch keine Gruppen existieren, zuerst im Hub eine Gruppe anlegen.
 
 ## EXE bauen
@@ -160,6 +165,8 @@ Asset-Name:
 - GET /api/state
 - GET /api/export
 - POST /api/import
+- GET /api/backup
+- POST /api/restore
 - GET /api/groups
 - POST /api/groups
 - PUT /api/groups/{id}
@@ -168,6 +175,12 @@ Asset-Name:
 - POST /api/bookmarks
 - PUT /api/bookmarks/{id}
 - DELETE /api/bookmarks/{id}
+- GET /api/modules
+- POST /api/modules
+- PUT /api/modules/{id}
+- DELETE /api/modules/{id}
+
+Wiederherstellungen werden vor dem Einspielen mit `POST /api/restore?preview=1` geprüft. Der Assistent erstellt auf Wunsch zuerst eine neue Vollsicherung und unterstützt die Konfliktstrategien `overwrite` und `skip`.
 
 Import-Hinweise:
 

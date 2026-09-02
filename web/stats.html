@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lesezeichen Statistiken</title>
   <script src="/static/theme.js"></script>
+  <script src="/static/navigation.js" defer></script>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -13,12 +14,9 @@
 
   <header class="topbar">
     <div>
-      <p class="eyebrow">Persoenlicher Browser Hub</p>
+      <p class="eyebrow">Persönlicher Browser Hub</p>
       <h1>Statistiken</h1>
       <p class="search-info">Meistgesuchte Keywords und meistgenutzte Gruppen.</p>
-    </div>
-    <div class="topbar-actions">
-      <a class="gear-link" href="/" aria-label="Zur Startseite">Zurueck</a>
     </div>
   </header>
 
@@ -27,7 +25,7 @@
     <section class="panel">
       <div class="panel-head">
         <h2>Meistgesuchte Keywords</h2>
-        <button id="clear-history" class="ghost" type="button" style="font-size:0.82rem;padding:6px 12px;">Verlauf loeschen</button>
+        <button id="clear-history" class="ghost" type="button" style="font-size:0.82rem;padding:6px 12px;">Verlauf löschen</button>
       </div>
       <p id="search-history-summary" class="search-info"></p>
       <div id="search-history-chart" class="stats-bar-chart"></div>

@@ -45,6 +45,9 @@ async function init() {
     if (bmId > 0) {
       pendingBookmarkIds = [bmId];
       openEditor(null, bmTitle ? `Notiz zu: ${bmTitle}` : "");
+    } else if (params.get("new") === "1") {
+      openEditor(null);
+      history.replaceState(null, "", "/static/notes.html");
     }
   } catch (err) {
     setStatus(err.message || "Fehler beim Laden.", true);
@@ -92,7 +95,7 @@ function appendNoteItem(n, bookmarkIdSet) {
     item.dataset.id = n.id;
 
     const preview = n.type === "vault"
-      ? "🔒 Verschluesselte Vault-Notiz"
+      ? "🔒 Verschlüsselte Vault-Notiz"
       : (n.content || "").replace(/\n/g, " ").slice(0, 80);
 
     item.innerHTML = `
@@ -137,7 +140,7 @@ function renderNoteView(note) {
     const unlocked = decryptedVaultCache.get(note.id);
     contentHtml = unlocked
       ? `<pre class="note-view-content is-code">${esc(unlocked)}</pre>`
-      : `<div class="note-view-content">🔒 Diese Vault-Notiz ist verschluesselt. Zum Anzeigen bitte entsperren.</div>`;
+      : `<div class="note-view-content">🔒 Diese Vault-Notiz ist verschlüsselt. Zum Anzeigen bitte entsperren.</div>`;
   } else if (note.type === "code") {
     contentHtml = `<pre class="note-view-content is-code">${esc(note.content)}</pre>`;
   } else {
@@ -160,9 +163,9 @@ function renderNoteView(note) {
           </a>
         `).join("")}
         ${orphanedIds.map(id => `
-          <span class="linked-bookmark orphaned" title="Lesezeichen #${id} wurde geloescht">
+          <span class="linked-bookmark orphaned" title="Lesezeichen #${id} wurde gelöscht">
             <span class="orphaned-indicator">🔴</span>
-            <span class="linked-bookmark-title">Lesezeichen #${id} (geloescht)</span>
+            <span class="linked-bookmark-title">Lesezeichen #${id} (gelöscht)</span>
           </span>
         `).join("")}
       </div>
@@ -173,7 +176,7 @@ function renderNoteView(note) {
     <div class="note-meta-row">
       <span class="type-badge type-${esc(note.type)}">${typeLabel(note.type)}</span>
       <span class="note-meta-date">Erstellt: ${formatDateLong(note.created_at)}</span>
-      <span class="note-meta-date">Geaendert: ${formatDateLong(note.updated_at)}</span>
+      <span class="note-meta-date">Geändert: ${formatDateLong(note.updated_at)}</span>
     </div>
   `;
 
@@ -201,7 +204,7 @@ function renderNoteView(note) {
         setStatus("Vault entsperrt.");
         renderNoteView(note);
       } catch {
-        setStatus("Passwort falsch oder Vault-Inhalt ungueltig.", true);
+        setStatus("Passwort falsch oder Vault-Inhalt ungültig.", true);
       }
     });
   }
@@ -239,7 +242,7 @@ function openEditor(note, prefillTitle = "") {
       </label>
       <label id="vault-password-wrap" class="${type === "vault" ? "" : "hidden"}">
         Vault-Passwort
-        <input id="editor-vault-password" type="password" placeholder="Passwort fuer Verschluesselung" autocomplete="new-password" />
+        <input id="editor-vault-password" type="password" placeholder="Passwort für Verschlüsselung" autocomplete="new-password" />
       </label>
       <label>
         Tags <span style="font-weight:400;text-transform:none;letter-spacing:0">(kommagetrennt)</span>
@@ -292,7 +295,7 @@ async function saveNote(existingId, existingBookmarkIds) {
     try {
       content = await encryptVaultContent(content, password);
     } catch {
-      setStatus("Vault-Inhalt konnte nicht verschluesselt werden.", true);
+      setStatus("Vault-Inhalt konnte nicht verschlüsselt werden.", true);
       return;
     }
   }
@@ -321,17 +324,17 @@ async function saveNote(existingId, existingBookmarkIds) {
 }
 
 async function deleteNote(id) {
-  if (!confirm("Notiz wirklich loeschen?")) return;
+  if (!confirm("Notiz wirklich löschen?")) return;
   try {
-    setStatus("Loesche…");
+    setStatus("Lösche…");
     await request(`/api/notes/${id}`, { method: "DELETE" });
     activeNoteId = null;
     await reloadNotes();
     resetDetail();
-    setStatus("Notiz geloescht.");
+    setStatus("Notiz gelöscht.");
     setTimeout(() => setStatus(""), 2000);
   } catch (err) {
-    setStatus(err.message || "Fehler beim Loeschen.", true);
+    setStatus(err.message || "Fehler beim Löschen.", true);
   }
 }
 
@@ -340,7 +343,7 @@ function resetDetail() {
   els.detailBody.innerHTML = `
     <div class="notes-placeholder">
       <div class="notes-placeholder-icon">&#128221;</div>
-      <p>Waehle eine Notiz aus oder lege eine neue an.</p>
+      <p>Wähle eine Notiz aus oder lege eine neue an.</p>
     </div>
   `;
 }
@@ -366,10 +369,10 @@ els.btnEdit.addEventListener("click", () => {
   decryptVaultContent(note.content, pw)
     .then((plain) => {
       openEditor({ ...note, content: plain });
-      setStatus("Vault entsperrt. Beim Speichern wird neu verschluesselt.");
+      setStatus("Vault entsperrt. Beim Speichern wird neu verschlüsselt.");
     })
     .catch(() => {
-      setStatus("Passwort falsch oder Vault-Inhalt ungueltig.", true);
+      setStatus("Passwort falsch oder Vault-Inhalt ungültig.", true);
     });
 });
 
