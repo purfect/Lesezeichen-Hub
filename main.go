@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -33,23 +34,27 @@ import (
 )
 
 const (
-	githubOwner = "purfect"
-	githubRepo  = "Lesezeichen-Hub"
+	githubOwner       = "purfect"
+	githubRepo        = "Lesezeichen-Hub"
+	moduleGithubOwner = "Lesezeichen-Hub"
+	githubAPIBase     = "https://api.github.com"
 )
 
 var appVersion = "dev"
 
 type application struct {
-	db             *sql.DB
-	webFS          fs.FS
-	externalPrices bool
-	metalPricesMu  sync.RWMutex
-	metalPrices    metalPricesPayload
-	metalPricesAt  time.Time
-	metalPricesErr string
-	silverPricesMu sync.RWMutex
-	silverPrices   silverPricesPayload
-	silverPricesAt time.Time
+	db               *sql.DB
+	webFS            fs.FS
+	moduleAPIBase    string
+	moduleInstallDir string
+	externalPrices   bool
+	metalPricesMu    sync.RWMutex
+	metalPrices      metalPricesPayload
+	metalPricesAt    time.Time
+	metalPricesErr   string
+	silverPricesMu   sync.RWMutex
+	silverPrices     silverPricesPayload
+	silverPricesAt   time.Time
 }
 
 type metalPricesPayload struct {
@@ -119,6 +124,25 @@ type localModule struct {
 	URL       string `json:"url"`
 	Available bool   `json:"available"`
 	Error     string `json:"error,omitempty"`
+}
+
+type catalogModule struct {
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	RepositoryURL string `json:"repository_url"`
+	DefaultBranch string `json:"default_branch"`
+	Installed     bool   `json:"installed"`
+	LocalID       int64  `json:"local_id,omitempty"`
+	LocalURL      string `json:"local_url,omitempty"`
+}
+
+type githubRepository struct {
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	HTMLURL       string `json:"html_url"`
+	DefaultBranch string `json:"default_branch"`
+	Archived      bool   `json:"archived"`
+	Fork          bool   `json:"fork"`
 }
 
 type apiError struct {
@@ -246,7 +270,12 @@ func main() {
 		log.Fatalf("init schema: %v", err)
 	}
 
-	app := &application{db: db, externalPrices: envBool("ENABLE_EXTERNAL_PRICES", true)}
+	app := &application{
+		db:               db,
+		moduleAPIBase:    githubAPIBase,
+		moduleInstallDir: envOrDefault("MODULES_PATH", "./modules"),
+		externalPrices:   envBool("ENABLE_EXTERNAL_PRICES", true),
+	}
 	mux := http.NewServeMux()
 
 	webFS, err := fs.Sub(embeddedWebFiles, "web")
@@ -276,6 +305,8 @@ func main() {
 	mux.HandleFunc("/api/notes/", app.handleNoteRoutes)
 	mux.HandleFunc("/api/modules", app.handleModules)
 	mux.HandleFunc("/api/modules/", app.handleModuleRoutes)
+	mux.HandleFunc("/api/module-catalog", app.handleModuleCatalog)
+	mux.HandleFunc("/api/module-catalog/", app.handleModuleCatalogRoutes)
 	mux.HandleFunc("/api/module-folder", app.handleModuleFolder)
 	mux.HandleFunc("/modules/", app.handleModuleFiles)
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
@@ -442,6 +473,298 @@ func (app *application) listModules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"modules": modules})
 }
 
+func (app *application) handleModuleCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+
+	modules, err := app.fetchModuleCatalog(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"modules": modules})
+}
+
+func (app *application) handleModuleCatalogRoutes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/module-catalog/"), "/")
+	if !strings.HasSuffix(trimmed, "/install") {
+		http.NotFound(w, r)
+		return
+	}
+	repositoryName, err := url.PathUnescape(strings.TrimSuffix(trimmed, "/install"))
+	if err != nil || repositoryName == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiger repository-name"))
+		return
+	}
+
+	module, err := app.installCatalogModule(r.Context(), repositoryName)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, module)
+}
+
+func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule, error) {
+	apiBase := strings.TrimRight(app.moduleAPIBase, "/")
+	if apiBase == "" {
+		apiBase = githubAPIBase
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/orgs/"+moduleGithubOwner+"/repos?per_page=100&type=public", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("modulkatalog konnte nicht geladen werden: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub antwortet mit Status %d", response.StatusCode)
+	}
+
+	var repositories []githubRepository
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&repositories); err != nil {
+		return nil, fmt.Errorf("ungueltige GitHub-Antwort: %w", err)
+	}
+	installed := make(map[string]localModule)
+	rows, err := app.db.QueryContext(ctx, `SELECT id, name FROM modules`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var item localModule
+		if err := rows.Scan(&item.ID, &item.Name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		installed[strings.ToLower(item.Name)] = item
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	modules := make([]catalogModule, 0, len(repositories))
+	for _, repository := range repositories {
+		if repository.Archived || repository.Fork || repository.Name == "" || repository.DefaultBranch == "" {
+			continue
+		}
+		module := catalogModule{
+			Name:          repository.Name,
+			Description:   repository.Description,
+			RepositoryURL: repository.HTMLURL,
+			DefaultBranch: repository.DefaultBranch,
+		}
+		if local, ok := installed[strings.ToLower(repository.Name)]; ok {
+			module.Installed = true
+			module.LocalID = local.ID
+			module.LocalURL = fmt.Sprintf("/modules/%d/index.html", local.ID)
+		}
+		modules = append(modules, module)
+	}
+	sort.Slice(modules, func(i, j int) bool { return strings.ToLower(modules[i].Name) < strings.ToLower(modules[j].Name) })
+	return modules, nil
+}
+
+func (app *application) installCatalogModule(ctx context.Context, repositoryName string) (catalogModule, error) {
+	modules, err := app.fetchModuleCatalog(ctx)
+	if err != nil {
+		return catalogModule{}, err
+	}
+	var selected catalogModule
+	for _, module := range modules {
+		if strings.EqualFold(module.Name, repositoryName) {
+			selected = module
+			break
+		}
+	}
+	if selected.Name == "" {
+		return catalogModule{}, fmt.Errorf("repository gehoert nicht zum verfuegbaren Modulkatalog")
+	}
+	if selected.Installed {
+		return catalogModule{}, fmt.Errorf("modul ist bereits eingerichtet")
+	}
+
+	installBase := strings.TrimSpace(app.moduleInstallDir)
+	if installBase == "" {
+		installBase = "./modules"
+	}
+	installBase, err = filepath.Abs(installBase)
+	if err != nil {
+		return catalogModule{}, fmt.Errorf("modulordner ist ungueltig")
+	}
+	if err := os.MkdirAll(installBase, 0755); err != nil {
+		return catalogModule{}, fmt.Errorf("modulordner konnte nicht erstellt werden: %w", err)
+	}
+	destination := filepath.Join(installBase, selected.Name)
+	if _, err := os.Stat(destination); !errors.Is(err, os.ErrNotExist) {
+		return catalogModule{}, fmt.Errorf("zielordner fuer das modul existiert bereits")
+	}
+
+	archive, err := os.CreateTemp(installBase, ".module-*.zip")
+	if err != nil {
+		return catalogModule{}, err
+	}
+	archivePath := archive.Name()
+	archive.Close()
+	defer os.Remove(archivePath)
+	apiBase := strings.TrimRight(app.moduleAPIBase, "/")
+	if apiBase == "" {
+		apiBase = githubAPIBase
+	}
+	archiveURL := fmt.Sprintf("%s/repos/%s/%s/zipball/%s", apiBase, moduleGithubOwner, url.PathEscape(selected.Name), url.PathEscape(selected.DefaultBranch))
+	if err := downloadFile(ctx, archiveURL, archivePath); err != nil {
+		return catalogModule{}, err
+	}
+
+	staging, err := os.MkdirTemp(installBase, ".module-install-*")
+	if err != nil {
+		return catalogModule{}, err
+	}
+	defer os.RemoveAll(staging)
+	if err := extractModuleArchive(archivePath, staging); err != nil {
+		return catalogModule{}, err
+	}
+	moduleRoot, err := findModuleRoot(staging)
+	if err != nil {
+		return catalogModule{}, err
+	}
+	rootRelative, err := filepath.Rel(staging, moduleRoot)
+	if err != nil {
+		return catalogModule{}, err
+	}
+	if err := os.Rename(staging, destination); err != nil {
+		return catalogModule{}, fmt.Errorf("modul konnte nicht eingerichtet werden: %w", err)
+	}
+	moduleRoot = filepath.Join(destination, rootRelative)
+	removeDestination := true
+	defer func() {
+		if removeDestination {
+			_ = os.RemoveAll(destination)
+		}
+	}()
+
+	tx, err := app.db.BeginTx(ctx, nil)
+	if err != nil {
+		return catalogModule{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO groups(name, description) VALUES('Module', 'Installierte Module')`); err != nil {
+		return catalogModule{}, err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO modules(name, root_path, managed) VALUES(?, ?, 1)`, selected.Name, moduleRoot)
+	if err != nil {
+		return catalogModule{}, fmt.Errorf("modul konnte nicht registriert werden: %w", err)
+	}
+	moduleID, _ := result.LastInsertId()
+	moduleURL := fmt.Sprintf("/modules/%d/index.html", moduleID)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO bookmarks(group_id, title, url, notes, favorite, sort_order) SELECT id, ?, ?, ?, 1, 0 FROM groups WHERE name = 'Module'`, selected.Name, moduleURL, selected.Description); err != nil {
+		return catalogModule{}, fmt.Errorf("modulstart konnte nicht angelegt werden: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return catalogModule{}, err
+	}
+	removeDestination = false
+	selected.Installed = true
+	selected.LocalID = moduleID
+	selected.LocalURL = moduleURL
+	return selected, nil
+}
+
+func extractModuleArchive(archivePath, destination string) error {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("modularchiv ist ungueltig: %w", err)
+	}
+	defer reader.Close()
+	var totalSize uint64
+	for _, entry := range reader.File {
+		parts := strings.Split(filepath.ToSlash(entry.Name), "/")
+		if len(parts) < 2 {
+			continue
+		}
+		relativeName := path.Clean(strings.Join(parts[1:], "/"))
+		if relativeName == "." {
+			continue
+		}
+		if relativeName == ".." || strings.HasPrefix(relativeName, "../") || path.IsAbs(relativeName) || entry.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("modularchiv enthaelt einen unzulaessigen Pfad")
+		}
+		totalSize += entry.UncompressedSize64
+		if totalSize > 500<<20 {
+			return fmt.Errorf("modularchiv ist zu gross")
+		}
+		target := filepath.Join(destination, filepath.FromSlash(relativeName))
+		if entry.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		source, err := entry.Open()
+		if err != nil {
+			return err
+		}
+		targetFile, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			source.Close()
+			return err
+		}
+		_, copyErr := io.Copy(targetFile, source)
+		closeErr := targetFile.Close()
+		source.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
+
+func findModuleRoot(root string) (string, error) {
+	for _, relative := range []string{"", "public", "static", "web"} {
+		candidate := filepath.Join(root, relative)
+		if info, err := os.Stat(filepath.Join(candidate, "index.html")); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("repository enthaelt keine unterstuetzte index.html")
+}
+
+func (app *application) removeManagedModuleFiles(moduleRoot string) {
+	installBase := strings.TrimSpace(app.moduleInstallDir)
+	if installBase == "" {
+		installBase = "./modules"
+	}
+	installBase, err := filepath.Abs(installBase)
+	if err != nil {
+		return
+	}
+	moduleRoot, err = filepath.Abs(moduleRoot)
+	if err != nil {
+		return
+	}
+	relative, err := filepath.Rel(installBase, moduleRoot)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return
+	}
+	topLevel := strings.Split(relative, string(filepath.Separator))[0]
+	_ = os.RemoveAll(filepath.Join(installBase, topLevel))
+}
+
 func (app *application) handleModuleRoutes(w http.ResponseWriter, r *http.Request) {
 	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/modules/"), "/")
 	moduleID, err := strconv.ParseInt(trimmed, 10, 64)
@@ -498,6 +821,16 @@ func (app *application) handleModuleRoutes(w http.ResponseWriter, r *http.Reques
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": rootPath})
 	case http.MethodDelete:
+		var moduleRoot string
+		var managed bool
+		if err := app.db.QueryRowContext(r.Context(), `SELECT root_path, managed FROM modules WHERE id = ?`, moduleID).Scan(&moduleRoot, &managed); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeErr(w, http.StatusNotFound, fmt.Errorf("modul nicht gefunden"))
+			} else {
+				writeErr(w, http.StatusInternalServerError, err)
+			}
+			return
+		}
 		rows, err := app.db.QueryContext(r.Context(), `SELECT id FROM bookmarks WHERE url = ?`, moduleURL)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
@@ -546,6 +879,9 @@ func (app *application) handleModuleRoutes(w http.ResponseWriter, r *http.Reques
 		}
 		for _, bookmarkID := range bookmarkIDs {
 			app.removeBookmarkFromNotes(r.Context(), bookmarkID)
+		}
+		if managed {
+			app.removeManagedModuleFiles(moduleRoot)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
@@ -706,6 +1042,7 @@ func initializeSchema(db *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL UNIQUE,
 			root_path TEXT NOT NULL,
+			managed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
 	}
@@ -724,6 +1061,7 @@ func initializeSchema(db *sql.DB) error {
 		`ALTER TABLE bookmarks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE bookmarks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE bookmarks ADD COLUMN remind_at DATETIME NULL`,
+		`ALTER TABLE modules ADD COLUMN managed INTEGER NOT NULL DEFAULT 0`,
 	}
 
 	for _, stmt := range migrations {

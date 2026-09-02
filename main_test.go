@@ -1,10 +1,12 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -301,6 +303,93 @@ func TestModuleCanBeUpdatedAndDeletedCompletely(t *testing.T) {
 	_ = db.QueryRow(`SELECT COUNT(*) FROM bookmarks WHERE url = ?`, moduleURL).Scan(&bookmarks)
 	if modules != 0 || bookmarks != 0 {
 		t.Errorf("modules = %d, bookmarks = %d, want 0/0", modules, bookmarks)
+	}
+}
+
+func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	var archive bytes.Buffer
+	zipWriter := zip.NewWriter(&archive)
+	indexFile, err := zipWriter.Create("example-main/public/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexFile.Write([]byte("<h1>Katalogmodul</h1>")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/orgs/Lesezeichen-Hub/repos"):
+			writeJSON(w, http.StatusOK, []githubRepository{{
+				Name:          "Beispiel-Modul",
+				Description:   "Ein Testmodul",
+				HTMLURL:       "https://github.com/Lesezeichen-Hub/Beispiel-Modul",
+				DefaultBranch: "main",
+			}})
+		case r.URL.Path == "/repos/Lesezeichen-Hub/Beispiel-Modul/zipball/main":
+			w.Header().Set("Content-Type", "application/zip")
+			_, _ = w.Write(archive.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer github.Close()
+
+	app := &application{
+		db:               db,
+		moduleAPIBase:    github.URL,
+		moduleInstallDir: testTempDir(t),
+	}
+	installResponse := httptest.NewRecorder()
+	app.handleModuleCatalogRoutes(installResponse, httptest.NewRequest(http.MethodPost, "/api/module-catalog/Beispiel-Modul/install", nil))
+	if installResponse.Code != http.StatusCreated {
+		t.Fatalf("install status = %d, body = %s", installResponse.Code, installResponse.Body.String())
+	}
+
+	var moduleID int64
+	var rootPath string
+	if err := db.QueryRow(`SELECT id, root_path FROM modules WHERE name = 'Beispiel-Modul'`).Scan(&moduleID, &rootPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(rootPath, "index.html")); err != nil {
+		t.Fatalf("installierte index.html fehlt: %v", err)
+	}
+	var bookmarkCount int
+	moduleURL := "/modules/" + strconv.FormatInt(moduleID, 10) + "/index.html"
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bookmarks WHERE title = 'Beispiel-Modul' AND url = ?`, moduleURL).Scan(&bookmarkCount); err != nil || bookmarkCount != 1 {
+		t.Fatalf("bookmark count = %d, error = %v", bookmarkCount, err)
+	}
+
+	catalogResponse := httptest.NewRecorder()
+	app.handleModuleCatalog(catalogResponse, httptest.NewRequest(http.MethodGet, "/api/module-catalog", nil))
+	if catalogResponse.Code != http.StatusOK {
+		t.Fatalf("catalog status = %d, body = %s", catalogResponse.Code, catalogResponse.Body.String())
+	}
+	var payload struct {
+		Modules []catalogModule `json:"modules"`
+	}
+	if err := json.Unmarshal(catalogResponse.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Modules) != 1 || !payload.Modules[0].Installed || payload.Modules[0].LocalURL != moduleURL {
+		t.Fatalf("catalog modules = %+v", payload.Modules)
+	}
+
+	deleteResponse := httptest.NewRecorder()
+	app.handleModuleRoutes(deleteResponse, httptest.NewRequest(http.MethodDelete, "/api/modules/"+strconv.FormatInt(moduleID, 10), nil))
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body = %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	if _, err := os.Stat(filepath.Dir(rootPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("verwalteter Modulordner wurde nicht entfernt: %v", err)
 	}
 }
 

@@ -5,4 +5,5 @@ data.db
 data.db-shm
 data.db-wal
 .runtime/
+modules/
 RELEASE_NOTES*.md

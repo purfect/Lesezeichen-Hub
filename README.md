@@ -49,6 +49,8 @@ http://127.0.0.1:2222
 
 ## Lokale Module integrieren
 
+Unter **Module** wird automatisch der öffentliche Modulkatalog der GitHub-Organisation `Lesezeichen-Hub` angezeigt. Ein Klick auf **Herunterladen & einrichten** lädt das Repository, richtet dessen statische Weboberfläche ein und legt in der Gruppe **Module** ein Start-Lesezeichen an. Bereits vorhandene Module sind im Katalog grün umrandet. Heruntergeladene Module liegen standardmäßig im Ordner `modules`; mit `MODULES_PATH` kann ein anderer Installationsordner gesetzt werden.
+
 Über **Hinzufuegen > Lokales Modul** kann ein Ordner mit einer `index.html` eingebunden werden, zum Beispiel der Projektordner von `werkplan`. Nach der Auswahl einer bestehenden Gruppe kann der Ordner über den Windows-Dialog **Ordner waehlen** ausgesucht werden. Der Hub speichert den lokalen Ordner und erzeugt in der ausgewählten Gruppe ein Start-Lesezeichen.
 
 Für jedes Modul können zusätzlich Notizen und Tags vergeben werden. Da ein Modul als normales Lesezeichen gespeichert wird, erscheint es automatisch in Suche, Favoriten, Tags, Exporten und Notizen. Wird ein Modul archiviert oder sein Lesezeichen gelöscht, kann es mit demselben Namen erneut angelegt werden; verwaiste oder archivierte Moduldefinitionen werden dabei wiederverwendet beziehungsweise reaktiviert.
@@ -183,6 +185,7 @@ Die Update-Installation funktioniert nur unter Windows aus einer laufenden `.exe
 
 - Datenbank: data.db
 - Laufzeitdateien: .runtime
+- Installierte Module: modules (oder `MODULES_PATH`)
 - Web-Frontend: web
 
 ## API Uebersicht
@@ -204,6 +207,8 @@ Die Update-Installation funktioniert nur unter Windows aus einer laufenden `.exe
 - POST /api/modules
 - PUT /api/modules/{id}
 - DELETE /api/modules/{id}
+- GET /api/module-catalog
+- POST /api/module-catalog/{repository}/install
 
 Wiederherstellungen werden vor dem Einspielen mit `POST /api/restore?preview=1` geprüft. Der Assistent erstellt auf Wunsch zuerst eine neue Vollsicherung und unterstützt die Konfliktstrategien `overwrite` und `skip`.
 

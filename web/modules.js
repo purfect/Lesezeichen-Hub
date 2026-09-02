@@ -1,4 +1,6 @@
 const els = {
+  catalogList: document.getElementById("catalog-list"),
+  catalogSummary: document.getElementById("catalog-summary"),
   list: document.getElementById("modules-list"),
   summary: document.getElementById("modules-summary"),
   check: document.getElementById("check-modules"),
@@ -12,13 +14,63 @@ async function loadModules(showResult = false) {
   try {
     els.check.disabled = true;
     setStatus("Module werden geprüft...");
-    const payload = await request("/api/modules");
-    renderModules(payload.modules || []);
-    setStatus(showResult ? "Verfügbarkeit aktualisiert." : "Bereit.");
+    const [catalogPayload, localPayload] = await Promise.all([
+      request("/api/module-catalog"),
+      request("/api/modules"),
+    ]);
+    renderCatalog(catalogPayload.modules || []);
+    renderModules(localPayload.modules || []);
+    setStatus(showResult ? "Modulliste aktualisiert." : "Bereit.");
   } catch (error) {
     setStatus(error.message || "Module konnten nicht geladen werden.", true);
   } finally {
     els.check.disabled = false;
+  }
+}
+
+function renderCatalog(modules) {
+  els.catalogList.innerHTML = "";
+  const installed = modules.filter((item) => item.installed).length;
+  els.catalogSummary.textContent = `${modules.length} Module, davon ${installed} eingerichtet.`;
+  if (modules.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "Zurzeit sind keine Module im GitHub-Katalog verfügbar.";
+    els.catalogList.appendChild(empty);
+    return;
+  }
+
+  for (const module of modules) {
+    const card = document.createElement("article");
+    card.className = `module-card catalog-card ${module.installed ? "is-installed" : ""}`;
+    card.innerHTML = `
+      <div class="module-card-head">
+        <strong>${escapeHTML(module.name)}</strong>
+        <span class="module-status ${module.installed ? "is-available" : ""}">${module.installed ? "Eingerichtet" : "Verfügbar"}</span>
+      </div>
+      <p class="module-description">${escapeHTML(module.description || "Modul aus dem Lesezeichen-Hub")}</p>
+      <div class="module-actions">
+        <a class="secondary-link" href="${escapeHTML(module.repository_url)}" target="_blank" rel="noreferrer">Repository</a>
+        ${module.installed
+          ? `<a class="primary-link" href="${escapeHTML(module.local_url)}">Öffnen</a>`
+          : '<button class="install-module" type="button">Herunterladen &amp; einrichten</button>'}
+      </div>`;
+    const installButton = card.querySelector(".install-module");
+    installButton?.addEventListener("click", async () => {
+      try {
+        installButton.disabled = true;
+        installButton.textContent = "Wird eingerichtet...";
+        setStatus(`${module.name} wird heruntergeladen und eingerichtet...`);
+        await request(`/api/module-catalog/${encodeURIComponent(module.name)}/install`, { method: "POST" });
+        setStatus(`${module.name} wurde eingerichtet.`);
+        await loadModules();
+      } catch (error) {
+        installButton.disabled = false;
+        installButton.textContent = "Herunterladen & einrichten";
+        setStatus(error.message || "Modul konnte nicht eingerichtet werden.", true);
+      }
+    });
+    els.catalogList.appendChild(card);
   }
 }
 
@@ -36,7 +88,7 @@ function renderModules(modules) {
 
   for (const module of modules) {
     const card = document.createElement("article");
-    card.className = "module-card";
+    card.className = "module-card is-installed";
     card.innerHTML = `
       <div class="module-card-head">
         <strong>${escapeHTML(module.name)}</strong>

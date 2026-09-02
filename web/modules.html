@@ -15,20 +15,30 @@
   <header class="topbar">
     <div>
       <p class="eyebrow">Persönlicher Browser Hub</p>
-      <h1>Lokale Module</h1>
-      <p class="search-info">Lokale Webanwendungen prüfen, neu verbinden und verwalten.</p>
+      <h1>Module</h1>
+      <p class="search-info">Module aus dem Lesezeichen-Hub laden und lokale Installationen verwalten.</p>
     </div>
-    <a class="primary-link" href="/?add=module">Modul hinzufügen</a>
+    <a class="primary-link" href="/?add=module">Lokales Modul hinzufügen</a>
   </header>
 
   <main class="overview-main">
     <section class="panel">
       <div class="panel-head">
         <div>
+          <h2>Verfügbare Module</h2>
+          <p id="catalog-summary" class="search-info"></p>
+        </div>
+        <button id="check-modules" class="ghost" type="button">Liste aktualisieren</button>
+      </div>
+      <div id="catalog-list" class="modules-grid" aria-live="polite"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
           <h2>Registrierte Module</h2>
           <p id="modules-summary" class="search-info"></p>
         </div>
-        <button id="check-modules" class="ghost" type="button">Verfügbarkeit prüfen</button>
       </div>
       <div id="modules-list" class="modules-grid" aria-live="polite"></div>
     </section>
