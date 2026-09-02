@@ -422,7 +422,7 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("ein aktives Modul mit diesem Namen existiert bereits"))
 			return
 		}
-		if _, err := tx.ExecContext(r.Context(), `UPDATE bookmarks SET group_id = ?, title = ?, notes = ?, tags = ?, favorite = 1, archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, payload.GroupID, name, strings.TrimSpace(payload.Notes), serializeTags(payload.Tags), existingBookmarkID); err != nil {
+		if _, err := tx.ExecContext(r.Context(), `UPDATE bookmarks SET group_id = ?, title = ?, notes = ?, tags = ?, favorite = 0, archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, payload.GroupID, name, strings.TrimSpace(payload.Notes), serializeTags(payload.Tags), existingBookmarkID); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -436,7 +436,7 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	if _, err := tx.ExecContext(r.Context(), `INSERT INTO bookmarks(group_id, title, url, notes, tags, favorite, sort_order) VALUES(?, ?, ?, ?, ?, ?, ?)`, payload.GroupID, name, moduleURL, strings.TrimSpace(payload.Notes), serializeTags(payload.Tags), 1, 0); err != nil {
+	if _, err := tx.ExecContext(r.Context(), `INSERT INTO bookmarks(group_id, title, url, notes, tags, favorite, sort_order) VALUES(?, ?, ?, ?, ?, ?, ?)`, payload.GroupID, name, moduleURL, strings.TrimSpace(payload.Notes), serializeTags(payload.Tags), 0, 0); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("modulstart konnte nicht angelegt werden: %v", err))
 		return
 	}
@@ -709,7 +709,7 @@ func (app *application) installCatalogModule(ctx context.Context, repositoryName
 	}
 	moduleID, _ := result.LastInsertId()
 	moduleURL := fmt.Sprintf("/modules/%d/index.html", moduleID)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO bookmarks(group_id, title, url, notes, favorite, sort_order) SELECT id, ?, ?, ?, 1, 0 FROM groups WHERE name = 'Module'`, selected.Name, moduleURL, selected.Description); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO bookmarks(group_id, title, url, notes, favorite, sort_order) SELECT id, ?, ?, ?, 0, 0 FROM groups WHERE name = 'Module'`, selected.Name, moduleURL, selected.Description); err != nil {
 		return catalogModule{}, fmt.Errorf("modulstart konnte nicht angelegt werden: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

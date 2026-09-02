@@ -306,6 +306,48 @@ func TestModuleCanBeUpdatedAndDeletedCompletely(t *testing.T) {
 	}
 }
 
+func TestCreatedModuleBookmarkIsNotFavoriteByDefault(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	groupResult, err := db.Exec(`INSERT INTO groups(name) VALUES('Module')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupID, _ := groupResult.LastInsertId()
+
+	moduleDir := testTempDir(t)
+	if err := os.WriteFile(filepath.Join(moduleDir, "index.html"), []byte("<h1>Modul</h1>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"group_id": groupID,
+		"name":     "Werkplan",
+		"path":     moduleDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := &application{db: db}
+	response := httptest.NewRecorder()
+	app.handleModules(response, httptest.NewRequest(http.MethodPost, "/api/modules", bytes.NewReader(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	var favorite int
+	if err := db.QueryRow(`SELECT favorite FROM bookmarks WHERE title = 'Werkplan'`).Scan(&favorite); err != nil {
+		t.Fatal(err)
+	}
+	if favorite != 0 {
+		t.Fatalf("favorite = %d, want 0", favorite)
+	}
+}
+
 func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
 	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
@@ -374,6 +416,13 @@ func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
 	moduleURL := "/modules/" + strconv.FormatInt(moduleID, 10) + "/index.html"
 	if err := db.QueryRow(`SELECT COUNT(*) FROM bookmarks WHERE title = 'Beispiel-Modul' AND url = ?`, moduleURL).Scan(&bookmarkCount); err != nil || bookmarkCount != 1 {
 		t.Fatalf("bookmark count = %d, error = %v", bookmarkCount, err)
+	}
+	var favorite int
+	if err := db.QueryRow(`SELECT favorite FROM bookmarks WHERE title = 'Beispiel-Modul' AND url = ?`, moduleURL).Scan(&favorite); err != nil {
+		t.Fatalf("favorite konnte nicht gelesen werden: %v", err)
+	}
+	if favorite != 0 {
+		t.Fatalf("favorite = %d, want 0", favorite)
 	}
 
 	catalogResponse := httptest.NewRecorder()
