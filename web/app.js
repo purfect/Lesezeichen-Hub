@@ -10,11 +10,13 @@ const state = {
     groupId: null,
     bookmarkId: null,
     bookmarkGroupId: null,
+    favoriteId: null,
   },
 };
 
 const metalPricesVisibleKey = "lsz_metal_prices_visible";
 const savedViewsKey = "lsz_saved_views";
+const favoritesQuickbarOrderKey = "lsz_favorites_quickbar_order";
 let pendingRestorePayload = null;
 
 const els = {
@@ -920,17 +922,20 @@ function renderFavoritesQuickbar() {
       }
       return String(a.title || "").localeCompare(String(b.title || ""));
     });
+  const orderedFavorites = sortFavoritesQuickbar(favorites);
 
   els.favoritesQuickbar.innerHTML = "";
-  if (favorites.length === 0) {
+  if (orderedFavorites.length === 0) {
     els.favoritesSegment.classList.add("hidden");
     return;
   }
 
   els.favoritesSegment.classList.remove("hidden");
-  for (const bookmark of favorites) {
+  for (const bookmark of orderedFavorites) {
     const link = document.createElement("a");
     link.className = "favorite-pill";
+    link.draggable = true;
+    link.dataset.bookmarkId = String(bookmark.id);
     link.href = bookmark.url;
     link.target = "_blank";
     link.rel = "noreferrer";
@@ -939,8 +944,79 @@ function renderFavoritesQuickbar() {
     if (bookmark.pinned) {
       link.classList.add("is-pinned");
     }
+    link.addEventListener("dragstart", (event) => onFavoriteDragStart(event, bookmark.id));
+    link.addEventListener("dragend", onFavoriteDragEnd);
+    link.addEventListener("dragover", onFavoriteDragOver);
+    link.addEventListener("drop", (event) => onFavoriteDrop(event, bookmark.id));
     els.favoritesQuickbar.appendChild(link);
   }
+}
+
+function sortFavoritesQuickbar(favorites) {
+  const savedOrder = loadFavoritesQuickbarOrder();
+  const positions = new Map(savedOrder.map((id, index) => [id, index]));
+  const orderedFavorites = [...favorites].sort((a, b) => {
+    const aPosition = positions.get(a.id);
+    const bPosition = positions.get(b.id);
+    if (aPosition !== undefined || bPosition !== undefined) {
+      return (aPosition ?? Number.MAX_SAFE_INTEGER) - (bPosition ?? Number.MAX_SAFE_INTEGER);
+    }
+    return 0;
+  });
+  const currentIDs = orderedFavorites.map((bookmark) => bookmark.id);
+  if (savedOrder.length !== currentIDs.length || savedOrder.some((id, index) => id !== currentIDs[index])) {
+    saveFavoritesQuickbarOrder(currentIDs);
+  }
+  return orderedFavorites;
+}
+
+function loadFavoritesQuickbarOrder() {
+  try {
+    const value = JSON.parse(localStorage.getItem(favoritesQuickbarOrderKey) || "[]");
+    return Array.isArray(value) ? value.filter((id) => Number.isFinite(id)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFavoritesQuickbarOrder(orderedIDs) {
+  localStorage.setItem(favoritesQuickbarOrderKey, JSON.stringify(orderedIDs));
+}
+
+function onFavoriteDragStart(event, bookmarkID) {
+  state.drag.favoriteId = bookmarkID;
+  event.dataTransfer?.setData("text/plain", String(bookmarkID));
+  event.dataTransfer.effectAllowed = "move";
+  event.currentTarget.classList.add("dragging");
+}
+
+function onFavoriteDragEnd(event) {
+  event.currentTarget.classList.remove("dragging");
+  state.drag.favoriteId = null;
+  for (const item of els.favoritesQuickbar.querySelectorAll(".favorite-pill")) {
+    item.classList.remove("drop-target");
+  }
+}
+
+function onFavoriteDragOver(event) {
+  if (!state.drag.favoriteId) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  event.currentTarget.classList.add("drop-target");
+}
+
+function onFavoriteDrop(event, targetBookmarkID) {
+  event.preventDefault();
+  event.currentTarget.classList.remove("drop-target");
+  const draggedBookmarkID = state.drag.favoriteId;
+  if (!draggedBookmarkID || draggedBookmarkID === targetBookmarkID) return;
+
+  const draggedNode = els.favoritesQuickbar.querySelector(`.favorite-pill[data-bookmark-id="${draggedBookmarkID}"]`);
+  const targetNode = els.favoritesQuickbar.querySelector(`.favorite-pill[data-bookmark-id="${targetBookmarkID}"]`);
+  if (!draggedNode || !targetNode) return;
+
+  els.favoritesQuickbar.insertBefore(draggedNode, targetNode);
+  saveFavoritesQuickbarOrder([...els.favoritesQuickbar.querySelectorAll(".favorite-pill")].map((node) => Number(node.dataset.bookmarkId)));
 }
 
 function renderReminderAlerts() {

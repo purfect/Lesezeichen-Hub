@@ -4,6 +4,7 @@ let allBookmarks = [];   // flat list from /api/state
 let activeNoteId = null;
 let isEditing = false;
 let searchDebounce = null;
+let bookmarkNotesOnly = false;
 let pendingBookmarkIds = []; // set when arriving from main page via URL param
 const decryptedVaultCache = new Map();
 
@@ -12,6 +13,7 @@ const els = {
   notesList:       document.getElementById("notes-list"),
   notesSearch:     document.getElementById("notes-search"),
   notesSearchClear:document.getElementById("notes-search-clear"),
+  btnBookmarkNotes:document.getElementById("btn-bookmark-notes"),
   btnNewNote:      document.getElementById("btn-new-note"),
   detailHead:      document.getElementById("detail-head"),
   detailTitleLabel:document.getElementById("detail-title-label"),
@@ -35,16 +37,23 @@ async function init() {
     allNotes     = notesRes.notes || [];
     allBookmarks = (stateRes.groups || []).flatMap(g => g.bookmarks || []);
     updateTitleCounter();
-    renderList(allNotes);
+    renderFilteredList();
     setStatus("");
 
-    // Auto-open editor if arriving from a bookmark's note button
+    // Open a linked note when arriving from a bookmark; otherwise create one.
     const params = new URLSearchParams(location.search);
     const bmId    = Number(params.get("bookmark_id"));
     const bmTitle = params.get("bookmark_title") || "";
     if (bmId > 0) {
-      pendingBookmarkIds = [bmId];
-      openEditor(null, bmTitle ? `Notiz zu: ${bmTitle}` : "");
+      const linkedNote = allNotes
+        .filter(note => (note.bookmark_ids || []).includes(bmId))
+        .sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")))[0];
+      if (linkedNote) {
+        selectNote(linkedNote.id);
+      } else {
+        pendingBookmarkIds = [bmId];
+        openEditor(null, bmTitle ? `Notiz zu: ${bmTitle}` : "");
+      }
     } else if (params.get("new") === "1") {
       openEditor(null);
       history.replaceState(null, "", "/static/notes.html");
@@ -110,6 +119,39 @@ function appendNoteItem(n, bookmarkIdSet) {
     els.notesList.appendChild(item);
 }
 
+function getFilteredNotes() {
+  const query = els.notesSearch.value.trim().toLowerCase();
+  return allNotes.filter(note => {
+    const matchesBookmarkFilter = !bookmarkNotesOnly || (note.bookmark_ids || []).length > 0;
+    const matchesSearch = !query ||
+      note.title.toLowerCase().includes(query) ||
+      (note.content || "").toLowerCase().includes(query) ||
+      (note.tags || []).some(tag => tag.toLowerCase().includes(query));
+    return matchesBookmarkFilter && matchesSearch;
+  });
+}
+
+function renderFilteredList() {
+  renderList(getFilteredNotes());
+}
+
+function renderTextNoteContent(content) {
+  const codeBlockPattern = /\{code\}([\s\S]*?)\{code\}/g;
+  const source = String(content || "");
+  let lastIndex = 0;
+  let match;
+  let html = '<div class="note-view-content">';
+
+  while ((match = codeBlockPattern.exec(source)) !== null) {
+    html += esc(source.slice(lastIndex, match.index));
+    html += `</div><pre class="note-view-code-block">${esc(match[1])}</pre><div class="note-view-content">`;
+    lastIndex = match.index + match[0].length;
+  }
+
+  html += esc(source.slice(lastIndex));
+  return `${html}</div>`;
+}
+
 // ── Select / view a note ──────────────────────────────────────────────────
 function selectNote(id) {
   activeNoteId = id;
@@ -143,6 +185,8 @@ function renderNoteView(note) {
       : `<div class="note-view-content">🔒 Diese Vault-Notiz ist verschlüsselt. Zum Anzeigen bitte entsperren.</div>`;
   } else if (note.type === "code") {
     contentHtml = `<pre class="note-view-content is-code">${esc(note.content)}</pre>`;
+  } else if (note.type === "note") {
+    contentHtml = renderTextNoteContent(note.content);
   } else {
     contentHtml = `<div class="note-view-content">${esc(note.content)}</div>`;
   }
@@ -406,23 +450,20 @@ els.notesSearch.addEventListener("input", () => {
   updateSearchClearButton();
   clearTimeout(searchDebounce);
   searchDebounce = setTimeout(() => {
-    const q = els.notesSearch.value.trim().toLowerCase();
-    if (q === "") {
-      renderList(allNotes);
-      return;
-    }
-    const filtered = allNotes.filter(n =>
-      n.title.toLowerCase().includes(q) ||
-      (n.content || "").toLowerCase().includes(q) ||
-      (n.tags || []).some(t => t.toLowerCase().includes(q))
-    );
-    renderList(filtered);
+    renderFilteredList();
   }, 200);
+});
+
+els.btnBookmarkNotes.addEventListener("click", () => {
+  bookmarkNotesOnly = !bookmarkNotesOnly;
+  els.btnBookmarkNotes.classList.toggle("active", bookmarkNotesOnly);
+  els.btnBookmarkNotes.setAttribute("aria-pressed", String(bookmarkNotesOnly));
+  renderFilteredList();
 });
 
 els.notesSearchClear.addEventListener("click", () => {
   els.notesSearch.value = "";
-  renderList(allNotes);
+  renderFilteredList();
   updateSearchClearButton();
   els.notesSearch.focus();
 });
@@ -432,17 +473,7 @@ async function reloadNotes() {
   const res = await request("/api/notes");
   allNotes = res.notes || [];
   updateTitleCounter();
-  const q = els.notesSearch.value.trim().toLowerCase();
-  if (q) {
-    const filtered = allNotes.filter(n =>
-      n.title.toLowerCase().includes(q) ||
-      (n.content || "").toLowerCase().includes(q) ||
-      (n.tags || []).some(t => t.toLowerCase().includes(q))
-    );
-    renderList(filtered);
-  } else {
-    renderList(allNotes);
-  }
+  renderFilteredList();
 }
 
 function updateTitleCounter() {
