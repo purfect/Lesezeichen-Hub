@@ -393,6 +393,99 @@ func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
 	}
 }
 
+func TestCatalogModuleCanBeUpdated(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	makeArchive := func(indexBody string, includeOldFile bool) []byte {
+		var archive bytes.Buffer
+		zipWriter := zip.NewWriter(&archive)
+		indexFile, err := zipWriter.Create("example-main/public/index.html")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := indexFile.Write([]byte(indexBody)); err != nil {
+			t.Fatal(err)
+		}
+		if includeOldFile {
+			oldFile, err := zipWriter.Create("example-main/public/old.txt")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := oldFile.Write([]byte("old")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := zipWriter.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return archive.Bytes()
+	}
+	firstArchive := makeArchive("<h1>Version 1</h1>", true)
+	secondArchive := makeArchive("<h1>Version 2</h1>", false)
+	archiveRequests := 0
+
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/orgs/Lesezeichen-Hub/repos":
+			writeJSON(w, http.StatusOK, []githubRepository{{
+				Name:          "Beispiel-Modul",
+				Description:   "Ein Testmodul",
+				HTMLURL:       "https://github.com/Lesezeichen-Hub/Beispiel-Modul",
+				DefaultBranch: "main",
+			}})
+		case r.URL.Path == "/repos/Lesezeichen-Hub/Beispiel-Modul/zipball/main":
+			archiveRequests++
+			w.Header().Set("Content-Type", "application/zip")
+			if archiveRequests == 1 {
+				_, _ = w.Write(firstArchive)
+				return
+			}
+			_, _ = w.Write(secondArchive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer github.Close()
+
+	app := &application{
+		db:               db,
+		moduleAPIBase:    github.URL,
+		moduleInstallDir: testTempDir(t),
+	}
+	installResponse := httptest.NewRecorder()
+	app.handleModuleCatalogRoutes(installResponse, httptest.NewRequest(http.MethodPost, "/api/module-catalog/Beispiel-Modul/install", nil))
+	if installResponse.Code != http.StatusCreated {
+		t.Fatalf("install status = %d, body = %s", installResponse.Code, installResponse.Body.String())
+	}
+
+	var moduleID int64
+	var rootPath string
+	if err := db.QueryRow(`SELECT id, root_path FROM modules WHERE name = 'Beispiel-Modul'`).Scan(&moduleID, &rootPath); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(filepath.Join(rootPath, "index.html")); err != nil || string(body) != "<h1>Version 1</h1>" {
+		t.Fatalf("installed index = %q, error = %v", body, err)
+	}
+
+	updateResponse := httptest.NewRecorder()
+	app.handleModuleRoutes(updateResponse, httptest.NewRequest(http.MethodPost, "/api/modules/"+strconv.FormatInt(moduleID, 10)+"/update", nil))
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", updateResponse.Code, updateResponse.Body.String())
+	}
+	if err := db.QueryRow(`SELECT root_path FROM modules WHERE id = ?`, moduleID).Scan(&rootPath); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(filepath.Join(rootPath, "index.html")); err != nil || string(body) != "<h1>Version 2</h1>" {
+		t.Fatalf("updated index = %q, error = %v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(rootPath, "old.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("alte Moduldatei existiert nach Update noch: %v", err)
+	}
+}
+
 func TestModuleCatalogFallsBackWhenGithubRateLimitIsExhausted(t *testing.T) {
 	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {

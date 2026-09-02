@@ -49,7 +49,7 @@ http://127.0.0.1:2222
 
 ## Lokale Module integrieren
 
-Unter **Module** wird automatisch der öffentliche Modulkatalog der GitHub-Organisation `Lesezeichen-Hub` angezeigt. Ein Klick auf **Herunterladen & einrichten** lädt das Repository, richtet dessen statische Weboberfläche ein und legt in der Gruppe **Module** ein Start-Lesezeichen an. Bereits vorhandene Module sind im Katalog grün umrandet. Heruntergeladene Module liegen standardmäßig im Ordner `modules`; mit `MODULES_PATH` kann ein anderer Installationsordner gesetzt werden.
+Unter **Module** wird automatisch der öffentliche Modulkatalog der GitHub-Organisation `Lesezeichen-Hub` angezeigt. Ein Klick auf **Herunterladen & einrichten** lädt das Repository, richtet dessen statische Weboberfläche ein und legt in der Gruppe **Module** ein Start-Lesezeichen an. Bereits vorhandene Module sind im Katalog grün umrandet und können dort per **Aktualisieren** erneut aus dem Repository geladen werden. Heruntergeladene Module liegen standardmäßig im Ordner `modules`; mit `MODULES_PATH` kann ein anderer Installationsordner gesetzt werden.
 
 Für die GitHub-API kann optional `GITHUB_TOKEN` gesetzt werden. Ohne Token verwendet der Hub das anonyme API-Kontingent und wechselt bei einem ausgeschöpften Rate Limit automatisch auf die öffentliche Repository-Seite der Organisation.
 
@@ -59,7 +59,7 @@ Für jedes Modul können zusätzlich Notizen und Tags vergeben werden. Da ein Mo
 
 Die Dateien werden über den Hub unter `/modules/...` ausgeliefert, sodass relative CSS-, JavaScript- und Bildpfade der lokalen Anwendung funktionieren.
 
-Über **Module** in der Hauptnavigation lassen sich registrierte Module prüfen, umbenennen, mit einem neuen Ordner verbinden und vollständig inklusive Start-Lesezeichen löschen. Aufgelöste Symlinks und Windows-Junctions dürfen den registrierten Modulordner bei der Dateiauslieferung nicht verlassen.
+Über **Module** in der Hauptnavigation lassen sich registrierte Module prüfen, umbenennen, mit einem neuen Ordner verbinden, aus dem Katalog aktualisieren und vollständig inklusive Start-Lesezeichen löschen. Aufgelöste Symlinks und Windows-Junctions dürfen den registrierten Modulordner bei der Dateiauslieferung nicht verlassen.
 
 Der Server muss lokal unter Windows laufen und Zugriff auf den angegebenen Ordner haben. Änderungen an den Moduldateien werden beim nächsten Aufruf direkt verwendet.
 

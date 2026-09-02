@@ -125,6 +125,7 @@ type localModule struct {
 	Path      string `json:"path"`
 	URL       string `json:"url"`
 	Available bool   `json:"available"`
+	Managed   bool   `json:"managed"`
 	Error     string `json:"error,omitempty"`
 }
 
@@ -447,7 +448,7 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) listModules(w http.ResponseWriter, r *http.Request) {
-	rows, err := app.db.QueryContext(r.Context(), `SELECT id, name, root_path FROM modules ORDER BY lower(name), id`)
+	rows, err := app.db.QueryContext(r.Context(), `SELECT id, name, root_path, managed FROM modules ORDER BY lower(name), id`)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -457,7 +458,7 @@ func (app *application) listModules(w http.ResponseWriter, r *http.Request) {
 	modules := make([]localModule, 0)
 	for rows.Next() {
 		var item localModule
-		if err := rows.Scan(&item.ID, &item.Name, &item.Path); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Path, &item.Managed); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -661,22 +662,11 @@ func (app *application) installCatalogModule(ctx context.Context, repositoryName
 		return catalogModule{}, fmt.Errorf("zielordner fuer das modul existiert bereits")
 	}
 
-	archive, err := os.CreateTemp(installBase, ".module-*.zip")
+	archivePath, err := app.downloadCatalogModuleArchive(ctx, selected, installBase)
 	if err != nil {
 		return catalogModule{}, err
 	}
-	archivePath := archive.Name()
-	archive.Close()
 	defer os.Remove(archivePath)
-	archiveURL := ""
-	if strings.TrimSpace(app.moduleAPIBase) != "" && !strings.EqualFold(strings.TrimRight(app.moduleAPIBase, "/"), githubAPIBase) {
-		archiveURL = fmt.Sprintf("%s/repos/%s/%s/zipball/%s", strings.TrimRight(app.moduleAPIBase, "/"), moduleGithubOwner, url.PathEscape(selected.Name), url.PathEscape(selected.DefaultBranch))
-	} else {
-		archiveURL = fmt.Sprintf("%s/archive/refs/heads/%s.zip", strings.TrimRight(selected.RepositoryURL, "/"), url.PathEscape(selected.DefaultBranch))
-	}
-	if err := downloadFile(ctx, archiveURL, archivePath); err != nil {
-		return catalogModule{}, err
-	}
 
 	staging, err := os.MkdirTemp(installBase, ".module-install-*")
 	if err != nil {
@@ -730,6 +720,138 @@ func (app *application) installCatalogModule(ctx context.Context, repositoryName
 	selected.LocalID = moduleID
 	selected.LocalURL = moduleURL
 	return selected, nil
+}
+
+func (app *application) updateCatalogModule(ctx context.Context, moduleID int64) (catalogModule, error) {
+	var moduleName, moduleRoot string
+	var managed bool
+	if err := app.db.QueryRowContext(ctx, `SELECT name, root_path, managed FROM modules WHERE id = ?`, moduleID).Scan(&moduleName, &moduleRoot, &managed); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return catalogModule{}, fmt.Errorf("modul nicht gefunden")
+		}
+		return catalogModule{}, err
+	}
+	if !managed {
+		return catalogModule{}, fmt.Errorf("nur aus dem Katalog eingerichtete Module koennen aktualisiert werden")
+	}
+
+	installBase := strings.TrimSpace(app.moduleInstallDir)
+	if installBase == "" {
+		installBase = "./modules"
+	}
+	installBase, err := filepath.Abs(installBase)
+	if err != nil {
+		return catalogModule{}, fmt.Errorf("modulordner ist ungueltig")
+	}
+	if err := os.MkdirAll(installBase, 0755); err != nil {
+		return catalogModule{}, fmt.Errorf("modulordner konnte nicht erstellt werden: %w", err)
+	}
+
+	currentTopLevel, err := managedModuleTopLevel(installBase, moduleRoot)
+	if err != nil {
+		return catalogModule{}, err
+	}
+	repositoryName := filepath.Base(currentTopLevel)
+	modules, err := app.fetchModuleCatalog(ctx)
+	if err != nil {
+		return catalogModule{}, err
+	}
+	var selected catalogModule
+	for _, module := range modules {
+		if strings.EqualFold(module.Name, moduleName) || strings.EqualFold(module.Name, repositoryName) {
+			selected = module
+			break
+		}
+	}
+	if selected.Name == "" {
+		return catalogModule{}, fmt.Errorf("repository gehoert nicht zum verfuegbaren Modulkatalog")
+	}
+	archivePath, err := app.downloadCatalogModuleArchive(ctx, selected, installBase)
+	if err != nil {
+		return catalogModule{}, err
+	}
+	defer os.Remove(archivePath)
+
+	staging, err := os.MkdirTemp(installBase, ".module-update-*")
+	if err != nil {
+		return catalogModule{}, err
+	}
+	removeStaging := true
+	defer func() {
+		if removeStaging {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+	if err := extractModuleArchive(archivePath, staging); err != nil {
+		return catalogModule{}, err
+	}
+	newRoot, err := findModuleRoot(staging)
+	if err != nil {
+		return catalogModule{}, err
+	}
+	rootRelative, err := filepath.Rel(staging, newRoot)
+	if err != nil {
+		return catalogModule{}, err
+	}
+
+	backup := filepath.Join(installBase, fmt.Sprintf(".module-backup-%d-%d", moduleID, time.Now().UnixNano()))
+	hasBackup := false
+	if _, err := os.Stat(currentTopLevel); err == nil {
+		if err := os.Rename(currentTopLevel, backup); err != nil {
+			return catalogModule{}, fmt.Errorf("bestehendes modul konnte nicht vorbereitet werden: %w", err)
+		}
+		hasBackup = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return catalogModule{}, fmt.Errorf("bestehendes modul konnte nicht geprueft werden: %w", err)
+	}
+
+	replaceOK := false
+	defer func() {
+		if replaceOK {
+			if hasBackup {
+				_ = os.RemoveAll(backup)
+			}
+			return
+		}
+		_ = os.RemoveAll(currentTopLevel)
+		if hasBackup {
+			_ = os.Rename(backup, currentTopLevel)
+		}
+	}()
+	if err := os.Rename(staging, currentTopLevel); err != nil {
+		return catalogModule{}, fmt.Errorf("modul konnte nicht aktualisiert werden: %w", err)
+	}
+	removeStaging = false
+	updatedRoot := filepath.Join(currentTopLevel, rootRelative)
+	if _, err := app.db.ExecContext(ctx, `UPDATE modules SET root_path = ? WHERE id = ?`, updatedRoot, moduleID); err != nil {
+		return catalogModule{}, err
+	}
+	replaceOK = true
+
+	selected.Installed = true
+	selected.LocalID = moduleID
+	selected.LocalURL = fmt.Sprintf("/modules/%d/index.html", moduleID)
+	return selected, nil
+}
+
+func (app *application) downloadCatalogModuleArchive(ctx context.Context, module catalogModule, installBase string) (string, error) {
+	archive, err := os.CreateTemp(installBase, ".module-*.zip")
+	if err != nil {
+		return "", err
+	}
+	archivePath := archive.Name()
+	archive.Close()
+	archiveURL := ""
+	if strings.TrimSpace(app.moduleAPIBase) != "" && !strings.EqualFold(strings.TrimRight(app.moduleAPIBase, "/"), githubAPIBase) {
+		archiveURL = fmt.Sprintf("%s/repos/%s/%s/zipball/%s", strings.TrimRight(app.moduleAPIBase, "/"), moduleGithubOwner, url.PathEscape(module.Name), url.PathEscape(module.DefaultBranch))
+	} else {
+		archiveURL = fmt.Sprintf("%s/archive/refs/heads/%s.zip", strings.TrimRight(module.RepositoryURL, "/"), url.PathEscape(module.DefaultBranch))
+	}
+	if err := downloadFile(ctx, archiveURL, archivePath); err != nil {
+		_ = os.Remove(archivePath)
+		return "", err
+	}
+	return archivePath, nil
 }
 
 func extractModuleArchive(archivePath, destination string) error {
@@ -818,11 +940,50 @@ func (app *application) removeManagedModuleFiles(moduleRoot string) {
 	_ = os.RemoveAll(filepath.Join(installBase, topLevel))
 }
 
+func managedModuleTopLevel(installBase, moduleRoot string) (string, error) {
+	installBase, err := filepath.Abs(installBase)
+	if err != nil {
+		return "", fmt.Errorf("modulordner ist ungueltig")
+	}
+	moduleRoot, err = filepath.Abs(moduleRoot)
+	if err != nil {
+		return "", fmt.Errorf("modulpfad ist ungueltig")
+	}
+	relative, err := filepath.Rel(installBase, moduleRoot)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return "", fmt.Errorf("modul liegt nicht im verwalteten modulordner")
+	}
+	topLevel := strings.Split(relative, string(filepath.Separator))[0]
+	return filepath.Join(installBase, topLevel), nil
+}
+
 func (app *application) handleModuleRoutes(w http.ResponseWriter, r *http.Request) {
 	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/modules/"), "/")
-	moduleID, err := strconv.ParseInt(trimmed, 10, 64)
+	parts := strings.Split(trimmed, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungültige modul-id"))
+		return
+	}
+	moduleID, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || moduleID <= 0 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungültige modul-id"))
+		return
+	}
+	if len(parts) == 2 && parts[1] == "update" {
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		module, err := app.updateCatalogModule(r.Context(), moduleID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, module)
+		return
+	}
+	if len(parts) != 1 {
+		http.NotFound(w, r)
 		return
 	}
 
