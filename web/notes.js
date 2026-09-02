@@ -135,6 +135,23 @@ function renderFilteredList() {
   renderList(getFilteredNotes());
 }
 
+function renderTextNoteContent(content) {
+  const codeBlockPattern = /\{code\}([\s\S]*?)\{code\}/g;
+  const source = String(content || "");
+  let lastIndex = 0;
+  let match;
+  let html = '<div class="note-view-content">';
+
+  while ((match = codeBlockPattern.exec(source)) !== null) {
+    html += esc(source.slice(lastIndex, match.index));
+    html += `</div><pre class="note-view-code-block">${esc(match[1])}</pre><div class="note-view-content">`;
+    lastIndex = match.index + match[0].length;
+  }
+
+  html += esc(source.slice(lastIndex));
+  return `${html}</div>`;
+}
+
 // ── Select / view a note ──────────────────────────────────────────────────
 function selectNote(id) {
   activeNoteId = id;
@@ -168,6 +185,8 @@ function renderNoteView(note) {
       : `<div class="note-view-content">🔒 Diese Vault-Notiz ist verschlüsselt. Zum Anzeigen bitte entsperren.</div>`;
   } else if (note.type === "code") {
     contentHtml = `<pre class="note-view-content is-code">${esc(note.content)}</pre>`;
+  } else if (note.type === "note") {
+    contentHtml = renderTextNoteContent(note.content);
   } else {
     contentHtml = `<div class="note-view-content">${esc(note.content)}</div>`;
   }
