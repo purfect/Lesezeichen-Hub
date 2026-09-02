@@ -42,7 +42,7 @@ func TestNormalizeBookmarkURL(t *testing.T) {
 		value string
 		want  string
 	}{
-		{"HTTPS://Example.COM:443/path/#section", "https://example.com/path"},
+		{"HTTPS://Example.COM:443/path/#section", "https://example.com/path#section"},
 		{"http://example.com:80", "http://example.com/"},
 		{"https://example.com/path/", "https://example.com/path"},
 		{"/modules/12/index.html", "/modules/12/index.html"},
@@ -70,7 +70,7 @@ func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	groupID, _ := result.LastInsertId()
-	result, err = db.Exec(`INSERT INTO bookmarks(group_id, title, url) VALUES(?, ?, ?)`, groupID, "Runbook", "https://example.com/path/")
+	result, err = db.Exec(`INSERT INTO bookmarks(group_id, title, url) VALUES(?, ?, ?)`, groupID, "Runbook", "https://example.com/path/#section")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,22 @@ func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 		t.Fatal("normalisierte URL wurde nicht als Duplikat erkannt")
 	}
 
-	duplicate, err = app.findDuplicateBookmark(context.Background(), "https://example.com/path", bookmarkID)
+	distinctURLs := []string{
+		"https://example.com/other-path#section",
+		"https://example.com/path?ticket=2#section",
+		"https://example.com/path#other-section",
+	}
+	for _, distinctURL := range distinctURLs {
+		duplicate, err = app.findDuplicateBookmark(context.Background(), distinctURL, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if duplicate != "" {
+			t.Errorf("eigenstaendige URL derselben Website wurde als Duplikat erkannt: %s", distinctURL)
+		}
+	}
+
+	duplicate, err = app.findDuplicateBookmark(context.Background(), "https://example.com/path#section", bookmarkID)
 	if err != nil {
 		t.Fatal(err)
 	}

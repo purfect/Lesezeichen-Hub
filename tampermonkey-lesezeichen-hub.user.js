@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lesezeichen Hub Saver
 // @namespace    https://local.lesezeichen-hub
-// @version      1.1.0
+// @version      1.1.1
 // @description  Speichert die aktuelle Webseite direkt im lokalen Lesezeichen-Hub.
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
@@ -184,6 +184,9 @@
         if (event.key === "Escape") finish(null);
       };
       document.addEventListener("keydown", onKeyDown, true);
+      ["keydown", "keypress", "keyup", "beforeinput", "input", "change"].forEach((eventName) => {
+        form.addEventListener(eventName, (event) => event.stopPropagation());
+      });
       shadow.querySelector(".close").addEventListener("click", () => finish(null));
       shadow.querySelector(".cancel").addEventListener("click", () => finish(null));
       shadow.querySelector(".backdrop").addEventListener("click", (event) => {
