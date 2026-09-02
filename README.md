@@ -4,6 +4,14 @@ Moderner Bookmark-Hub als lokale Web-App mit Go und SQLite.
 
 Die Anwendung laeuft komplett lokal, bietet Gruppen, Tags, Favoriten, Wiedervorlagen, Import/Export und eine kompakte Uebersichtsseite.
 
+![Lesezeichen Hub im modernen Design mit Beispielgruppen und Lesezeichen](docs/images/example-bookmarks.png)
+
+*Startansicht mit Beispielgruppen, Lesezeichen, Tags und Favoriten-Schnellwahl.*
+
+![Lesezeichen Hub im ASCII-Monitor-Design mit Beispielgruppen und Lesezeichen](docs/images/example-bookmarks_dark.png)
+
+*Dieselbe Ansicht im optionalen ASCII-Monitor-Design.*
+
 ## Highlights
 
 - Gruppen fuer saubere Struktur
