@@ -387,6 +387,8 @@ func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
 		case r.URL.Path == "/repos/Lesezeichen-Hub/Beispiel-Modul/zipball/main":
 			w.Header().Set("Content-Type", "application/zip")
 			_, _ = w.Write(archive.Bytes())
+		case r.URL.Path == "/Lesezeichen-Hub/Beispiel-Modul/main/version.json":
+			writeJSON(w, http.StatusOK, moduleVersionManifest{Version: "1.0.0"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -394,9 +396,10 @@ func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
 	defer github.Close()
 
 	app := &application{
-		db:               db,
-		moduleAPIBase:    github.URL,
-		moduleInstallDir: testTempDir(t),
+		db:                 db,
+		moduleAPIBase:      github.URL,
+		moduleManifestBase: github.URL,
+		moduleInstallDir:   testTempDir(t),
 	}
 	installResponse := httptest.NewRecorder()
 	app.handleModuleCatalogRoutes(installResponse, httptest.NewRequest(http.MethodPost, "/api/module-catalog/Beispiel-Modul/install", nil))
@@ -411,6 +414,10 @@ func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(rootPath, "index.html")); err != nil {
 		t.Fatalf("installierte index.html fehlt: %v", err)
+	}
+	var installedVersion string
+	if err := db.QueryRow(`SELECT installed_version FROM modules WHERE id = ?`, moduleID).Scan(&installedVersion); err != nil || installedVersion != "1.0.0" {
+		t.Fatalf("installierte Version = %q, error = %v, want 1.0.0", installedVersion, err)
 	}
 	var bookmarkCount int
 	moduleURL := "/modules/" + strconv.FormatInt(moduleID, 10) + "/index.html"
@@ -501,6 +508,12 @@ func TestCatalogModuleCanBeUpdated(t *testing.T) {
 				return
 			}
 			_, _ = w.Write(secondArchive)
+		case r.URL.Path == "/Lesezeichen-Hub/Beispiel-Modul/main/version.json":
+			version := "1.0.0"
+			if archiveRequests > 0 {
+				version = "1.1.0"
+			}
+			writeJSON(w, http.StatusOK, moduleVersionManifest{Version: version})
 		default:
 			http.NotFound(w, r)
 		}
@@ -508,9 +521,10 @@ func TestCatalogModuleCanBeUpdated(t *testing.T) {
 	defer github.Close()
 
 	app := &application{
-		db:               db,
-		moduleAPIBase:    github.URL,
-		moduleInstallDir: testTempDir(t),
+		db:                 db,
+		moduleAPIBase:      github.URL,
+		moduleManifestBase: github.URL,
+		moduleInstallDir:   testTempDir(t),
 	}
 	installResponse := httptest.NewRecorder()
 	app.handleModuleCatalogRoutes(installResponse, httptest.NewRequest(http.MethodPost, "/api/module-catalog/Beispiel-Modul/install", nil))
@@ -540,6 +554,10 @@ func TestCatalogModuleCanBeUpdated(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(rootPath, "old.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("alte Moduldatei existiert nach Update noch: %v", err)
+	}
+	var installedVersion string
+	if err := db.QueryRow(`SELECT installed_version FROM modules WHERE id = ?`, moduleID).Scan(&installedVersion); err != nil || installedVersion != "1.1.0" {
+		t.Fatalf("aktualisierte Version = %q, error = %v, want 1.1.0", installedVersion, err)
 	}
 }
 
@@ -587,13 +605,16 @@ func TestModuleCatalogReadsOptionalVersionManifest(t *testing.T) {
 	if err := initializeSchema(db); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`INSERT INTO modules(name, root_path, installed_version, managed) VALUES(?, ?, ?, 1)`, "ansible-vault-encryption", "C:\\modules\\vault", "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/orgs/Lesezeichen-Hub/repos":
 			writeJSON(w, http.StatusOK, []githubRepository{{Name: "ansible-vault-encryption", DefaultBranch: "main"}})
 		case "/Lesezeichen-Hub/ansible-vault-encryption/main/version.json":
-			writeJSON(w, http.StatusOK, moduleVersionManifest{Version: "1.0.0"})
+			writeJSON(w, http.StatusOK, moduleVersionManifest{Version: "1.1.0"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -605,8 +626,8 @@ func TestModuleCatalogReadsOptionalVersionManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(modules) != 1 || modules[0].Version != "1.0.0" {
-		t.Fatalf("modules = %+v, want version from manifest", modules)
+	if len(modules) != 1 || modules[0].Version != "1.1.0" || modules[0].InstalledVersion != "1.0.0" || !modules[0].UpdateAvailable {
+		t.Fatalf("modules = %+v, want available update from manifest", modules)
 	}
 }
 

@@ -42,17 +42,17 @@ function renderCatalog(modules) {
 
   for (const module of modules) {
     const card = document.createElement("article");
-    card.className = `catalog-module ${module.installed ? "is-installed" : ""}`;
+    card.className = `catalog-module ${module.installed ? "is-installed" : ""} ${module.update_available ? "has-update" : ""}`;
     card.innerHTML = `
       <div class="module-identity">
         <span class="module-mark" aria-hidden="true">▦</span>
         <div><strong>${escapeHTML(module.name)}</strong><p class="module-description">${escapeHTML(module.description || "Modul aus dem Lesezeichen-Hub")}</p><span class="module-version">${module.version ? `Version ${escapeHTML(module.version)}` : "Ohne Versionsangabe"}</span></div>
       </div>
-      <span class="module-status ${module.installed ? "is-available" : ""}">${module.installed ? "Eingerichtet" : "Verfügbar"}</span>
+      <span class="module-status ${module.update_available ? "is-update" : (module.installed ? "is-available" : "")}">${module.update_available ? `Update: ${escapeHTML(module.installed_version)} → ${escapeHTML(module.version)}` : (module.installed ? "Eingerichtet" : "Verfügbar")}</span>
       <div class="module-actions">
         <a class="secondary-link" href="${escapeHTML(module.repository_url)}" target="_blank" rel="noreferrer">Repository</a>
         ${module.installed
-          ? `<button class="update-module" type="button">Aktualisieren</button><a class="primary-link" href="${escapeHTML(module.local_url)}" target="_blank" rel="noreferrer">Öffnen</a>`
+          ? `<button class="update-module" type="button">${module.update_available ? "Update installieren" : "Aktualisieren"}</button><a class="primary-link" href="${escapeHTML(module.local_url)}" target="_blank" rel="noreferrer">Öffnen</a>`
           : '<button class="install-module" type="button">Herunterladen &amp; einrichten</button>'}
       </div>`;
     const installButton = card.querySelector(".install-module");

@@ -123,24 +123,27 @@ type note struct {
 }
 
 type localModule struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	URL       string `json:"url"`
-	Available bool   `json:"available"`
-	Managed   bool   `json:"managed"`
-	Error     string `json:"error,omitempty"`
+	ID               int64  `json:"id"`
+	Name             string `json:"name"`
+	Path             string `json:"path"`
+	URL              string `json:"url"`
+	InstalledVersion string `json:"installed_version,omitempty"`
+	Available        bool   `json:"available"`
+	Managed          bool   `json:"managed"`
+	Error            string `json:"error,omitempty"`
 }
 
 type catalogModule struct {
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	RepositoryURL string `json:"repository_url"`
-	DefaultBranch string `json:"default_branch"`
-	Version       string `json:"version,omitempty"`
-	Installed     bool   `json:"installed"`
-	LocalID       int64  `json:"local_id,omitempty"`
-	LocalURL      string `json:"local_url,omitempty"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	RepositoryURL    string `json:"repository_url"`
+	DefaultBranch    string `json:"default_branch"`
+	Version          string `json:"version,omitempty"`
+	InstalledVersion string `json:"installed_version,omitempty"`
+	UpdateAvailable  bool   `json:"update_available"`
+	Installed        bool   `json:"installed"`
+	LocalID          int64  `json:"local_id,omitempty"`
+	LocalURL         string `json:"local_url,omitempty"`
 }
 
 type githubRepository struct {
@@ -466,7 +469,7 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) listModules(w http.ResponseWriter, r *http.Request) {
-	rows, err := app.db.QueryContext(r.Context(), `SELECT id, name, root_path, managed FROM modules ORDER BY lower(name), id`)
+	rows, err := app.db.QueryContext(r.Context(), `SELECT id, name, root_path, installed_version, managed FROM modules ORDER BY lower(name), id`)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -476,7 +479,7 @@ func (app *application) listModules(w http.ResponseWriter, r *http.Request) {
 	modules := make([]localModule, 0)
 	for rows.Next() {
 		var item localModule
-		if err := rows.Scan(&item.ID, &item.Name, &item.Path, &item.Managed); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Path, &item.InstalledVersion, &item.Managed); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -564,13 +567,13 @@ func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule
 		return nil, fmt.Errorf("ungueltige GitHub-Antwort: %w", err)
 	}
 	installed := make(map[string]localModule)
-	rows, err := app.db.QueryContext(ctx, `SELECT id, name FROM modules`)
+	rows, err := app.db.QueryContext(ctx, `SELECT id, name, installed_version, managed FROM modules`)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var item localModule
-		if err := rows.Scan(&item.ID, &item.Name); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.InstalledVersion, &item.Managed); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -596,6 +599,8 @@ func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule
 			module.Installed = true
 			module.LocalID = local.ID
 			module.LocalURL = fmt.Sprintf("/modules/%d/index.html", local.ID)
+			module.InstalledVersion = local.InstalledVersion
+			module.UpdateAvailable = local.Managed && local.InstalledVersion != "" && module.Version != "" && isNewerVersion(local.InstalledVersion, module.Version)
 		}
 		modules = append(modules, module)
 	}
@@ -748,7 +753,7 @@ func (app *application) installCatalogModule(ctx context.Context, repositoryName
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO groups(name, description) VALUES('Module', 'Installierte Module')`); err != nil {
 		return catalogModule{}, err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO modules(name, root_path, managed) VALUES(?, ?, 1)`, selected.Name, moduleRoot)
+	result, err := tx.ExecContext(ctx, `INSERT INTO modules(name, root_path, installed_version, managed) VALUES(?, ?, ?, 1)`, selected.Name, moduleRoot, selected.Version)
 	if err != nil {
 		return catalogModule{}, fmt.Errorf("modul konnte nicht registriert werden: %w", err)
 	}
@@ -868,7 +873,7 @@ func (app *application) updateCatalogModule(ctx context.Context, moduleID int64)
 	}
 	removeStaging = false
 	updatedRoot := filepath.Join(currentTopLevel, rootRelative)
-	if _, err := app.db.ExecContext(ctx, `UPDATE modules SET root_path = ? WHERE id = ?`, updatedRoot, moduleID); err != nil {
+	if _, err := app.db.ExecContext(ctx, `UPDATE modules SET root_path = ?, installed_version = ? WHERE id = ?`, updatedRoot, selected.Version, moduleID); err != nil {
 		return catalogModule{}, err
 	}
 	replaceOK = true
@@ -1301,6 +1306,7 @@ func initializeSchema(db *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL UNIQUE,
 			root_path TEXT NOT NULL,
+			installed_version TEXT NOT NULL DEFAULT '',
 			managed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
@@ -1321,6 +1327,7 @@ func initializeSchema(db *sql.DB) error {
 		`ALTER TABLE bookmarks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE bookmarks ADD COLUMN remind_at DATETIME NULL`,
 		`ALTER TABLE modules ADD COLUMN managed INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE modules ADD COLUMN installed_version TEXT NOT NULL DEFAULT ''`,
 	}
 
 	for _, stmt := range migrations {
