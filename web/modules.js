@@ -46,7 +46,7 @@ function renderCatalog(modules) {
     card.innerHTML = `
       <div class="module-identity">
         <span class="module-mark" aria-hidden="true">▦</span>
-        <div><strong>${escapeHTML(module.name)}</strong><p class="module-description">${escapeHTML(module.description || "Modul aus dem Lesezeichen-Hub")}</p></div>
+        <div><strong>${escapeHTML(module.name)}</strong><p class="module-description">${escapeHTML(module.description || "Modul aus dem Lesezeichen-Hub")}</p><span class="module-version">${module.version ? `Version ${escapeHTML(module.version)}` : "Ohne Versionsangabe"}</span></div>
       </div>
       <span class="module-status ${module.installed ? "is-available" : ""}">${module.installed ? "Eingerichtet" : "Verfügbar"}</span>
       <div class="module-actions">

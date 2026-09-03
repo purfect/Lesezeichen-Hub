@@ -335,6 +335,7 @@ body {
 .module-mark { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); color: var(--accent); background: rgba(44, 183, 161, 0.08); font-size: 1rem; }
 .module-identity strong, .registered-module-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .module-description { margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
+.module-version { display: block; margin-top: 5px; color: var(--accent); font-family: "Cascadia Mono", "IBM Plex Mono", Consolas, monospace; font-size: 0.72rem; }
 .catalog-module .module-actions { justify-content: end; }
 .registered-module { overflow: hidden; }
 .registered-module.is-installed { border-left: 3px solid var(--accent); }

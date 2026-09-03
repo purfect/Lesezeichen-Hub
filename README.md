@@ -59,7 +59,7 @@ Für jedes Modul können zusätzlich Notizen und Tags vergeben werden. Da ein Mo
 
 Die Dateien werden über den Hub unter `/modules/...` ausgeliefert, sodass relative CSS-, JavaScript- und Bildpfade der lokalen Anwendung funktionieren.
 
-Über **Module** in der Hauptnavigation lassen sich registrierte Module prüfen, umbenennen, mit einem neuen Ordner verbinden, aus dem Katalog aktualisieren und vollständig inklusive Start-Lesezeichen löschen. Aufgelöste Symlinks und Windows-Junctions dürfen den registrierten Modulordner bei der Dateiauslieferung nicht verlassen.
+Über **Module** in der Hauptnavigation lassen sich registrierte Module prüfen, umbenennen, mit einem neuen Ordner verbinden, aus dem Katalog aktualisieren und vollständig inklusive Start-Lesezeichen löschen. Der Katalog liest, sofern vorhanden, `version.json` eines Moduls direkt über `raw.githubusercontent.com`; dadurch wird für die Versionsanzeige kein GitHub-REST-API-Kontingent verbraucht. Module ohne Manifest bleiben nutzbar und werden als ohne Versionsangabe angezeigt. Aufgelöste Symlinks und Windows-Junctions dürfen den registrierten Modulordner bei der Dateiauslieferung nicht verlassen.
 
 Der Server muss lokal unter Windows laufen und Zugriff auf den angegebenen Ordner haben. Änderungen an den Moduldateien werden beim nächsten Aufruf direkt verwendet.
 

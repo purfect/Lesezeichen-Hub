@@ -582,6 +582,34 @@ func TestModuleCatalogFallsBackWhenGithubRateLimitIsExhausted(t *testing.T) {
 	}
 }
 
+func TestModuleCatalogReadsOptionalVersionManifest(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/orgs/Lesezeichen-Hub/repos":
+			writeJSON(w, http.StatusOK, []githubRepository{{Name: "ansible-vault-encryption", DefaultBranch: "main"}})
+		case "/Lesezeichen-Hub/ansible-vault-encryption/main/version.json":
+			writeJSON(w, http.StatusOK, moduleVersionManifest{Version: "1.0.0"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	app := &application{db: db, moduleAPIBase: server.URL, moduleManifestBase: server.URL}
+	modules, err := app.fetchModuleCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modules) != 1 || modules[0].Version != "1.0.0" {
+		t.Fatalf("modules = %+v, want version from manifest", modules)
+	}
+}
+
 func TestInitializeSchemaEnablesBookmarkStorage(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "data.db")
 	db, err := sql.Open("sqlite", dbPath)

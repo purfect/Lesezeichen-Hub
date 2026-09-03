@@ -39,25 +39,27 @@ const (
 	moduleGithubOwner = "Lesezeichen-Hub"
 	githubAPIBase     = "https://api.github.com"
 	githubWebBase     = "https://github.com"
+	githubRawBase     = "https://raw.githubusercontent.com"
 	updateManifestURL = "https://raw.githubusercontent.com/purfect/Lesezeichen-Hub/main/version.json"
 )
 
 var appVersion = "dev"
 
 type application struct {
-	db               *sql.DB
-	webFS            fs.FS
-	moduleAPIBase    string
-	moduleWebBase    string
-	moduleInstallDir string
-	externalPrices   bool
-	metalPricesMu    sync.RWMutex
-	metalPrices      metalPricesPayload
-	metalPricesAt    time.Time
-	metalPricesErr   string
-	silverPricesMu   sync.RWMutex
-	silverPrices     silverPricesPayload
-	silverPricesAt   time.Time
+	db                 *sql.DB
+	webFS              fs.FS
+	moduleAPIBase      string
+	moduleWebBase      string
+	moduleManifestBase string
+	moduleInstallDir   string
+	externalPrices     bool
+	metalPricesMu      sync.RWMutex
+	metalPrices        metalPricesPayload
+	metalPricesAt      time.Time
+	metalPricesErr     string
+	silverPricesMu     sync.RWMutex
+	silverPrices       silverPricesPayload
+	silverPricesAt     time.Time
 }
 
 type metalPricesPayload struct {
@@ -135,6 +137,7 @@ type catalogModule struct {
 	Description   string `json:"description"`
 	RepositoryURL string `json:"repository_url"`
 	DefaultBranch string `json:"default_branch"`
+	Version       string `json:"version,omitempty"`
 	Installed     bool   `json:"installed"`
 	LocalID       int64  `json:"local_id,omitempty"`
 	LocalURL      string `json:"local_url,omitempty"`
@@ -182,6 +185,10 @@ type updateManifest struct {
 	AssetURL      string `json:"asset_url"`
 	ChecksumURL   string `json:"checksum_url"`
 	ReleaseURL    string `json:"release_url"`
+}
+
+type moduleVersionManifest struct {
+	Version string `json:"version"`
 }
 
 type importPayload struct {
@@ -284,11 +291,12 @@ func main() {
 	}
 
 	app := &application{
-		db:               db,
-		moduleAPIBase:    githubAPIBase,
-		moduleWebBase:    githubWebBase,
-		moduleInstallDir: envOrDefault("MODULES_PATH", "./modules"),
-		externalPrices:   envBool("ENABLE_EXTERNAL_PRICES", true),
+		db:                 db,
+		moduleAPIBase:      githubAPIBase,
+		moduleWebBase:      githubWebBase,
+		moduleManifestBase: githubRawBase,
+		moduleInstallDir:   envOrDefault("MODULES_PATH", "./modules"),
+		externalPrices:     envBool("ENABLE_EXTERNAL_PRICES", true),
 	}
 	mux := http.NewServeMux()
 
@@ -583,6 +591,7 @@ func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule
 			RepositoryURL: repository.HTMLURL,
 			DefaultBranch: repository.DefaultBranch,
 		}
+		module.Version = app.fetchModuleVersion(ctx, repository.Name, repository.DefaultBranch)
 		if local, ok := installed[strings.ToLower(repository.Name)]; ok {
 			module.Installed = true
 			module.LocalID = local.ID
@@ -592,6 +601,32 @@ func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule
 	}
 	sort.Slice(modules, func(i, j int) bool { return strings.ToLower(modules[i].Name) < strings.ToLower(modules[j].Name) })
 	return modules, nil
+}
+
+func (app *application) fetchModuleVersion(ctx context.Context, repository, branch string) string {
+	manifestBase := strings.TrimRight(app.moduleManifestBase, "/")
+	if manifestBase == "" {
+		return ""
+	}
+	endpoint := fmt.Sprintf("%s/%s/%s/%s/version.json", manifestBase, moduleGithubOwner, url.PathEscape(repository), url.PathEscape(branch))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return ""
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return ""
+	}
+	var manifest moduleVersionManifest
+	if json.NewDecoder(io.LimitReader(response.Body, 16<<10)).Decode(&manifest) != nil {
+		return ""
+	}
+	return strings.TrimSpace(manifest.Version)
 }
 
 func (app *application) fetchModuleRepositoriesFromWeb(ctx context.Context) ([]githubRepository, error) {
