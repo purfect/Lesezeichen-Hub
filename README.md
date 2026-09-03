@@ -171,7 +171,7 @@ Asset-Name:
 
 Der Hub kennt seine Version aus dem Release-Tag. Der GitHub-Workflow setzt sie beim Build mit `-X main.appVersion=<Tag>`.
 
-In der Verwaltungsleiste kann der Hub nach Updates suchen. Dabei wird das neueste GitHub Release unter `purfect/Lesezeichen-Hub` abgefragt. Ist eine neue Version verfuegbar, kann sie nach Bestaetigung heruntergeladen und installiert werden.
+In der Verwaltungsleiste kann der Hub nach Updates suchen. Dabei wird `version.json` vom Standardbranch des Repositorys über `raw.githubusercontent.com` geladen. Die Datei enthält Version, Download-URL und SHA256-Prüfsumme des neuesten Releases. Der Update-Check nutzt damit nicht das GitHub-REST-API-Kontingent. Ist eine neue Version verfuegbar, kann sie nach Bestaetigung heruntergeladen und installiert werden.
 
 Ablauf:
 

@@ -39,6 +39,7 @@ const (
 	moduleGithubOwner = "Lesezeichen-Hub"
 	githubAPIBase     = "https://api.github.com"
 	githubWebBase     = "https://github.com"
+	updateManifestURL = "https://raw.githubusercontent.com/purfect/Lesezeichen-Hub/main/version.json"
 )
 
 var appVersion = "dev"
@@ -159,6 +160,7 @@ type updateInfo struct {
 	AssetName       string `json:"asset_name,omitempty"`
 	ReleaseURL      string `json:"release_url,omitempty"`
 	AssetURL        string `json:"asset_url,omitempty"`
+	ChecksumURL     string `json:"checksum_url,omitempty"`
 	CanInstall      bool   `json:"can_install"`
 	Message         string `json:"message,omitempty"`
 }
@@ -172,6 +174,14 @@ type githubRelease struct {
 type githubReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
+type updateManifest struct {
+	LatestVersion string `json:"latest_version"`
+	AssetName     string `json:"asset_name"`
+	AssetURL      string `json:"asset_url"`
+	ChecksumURL   string `json:"checksum_url"`
+	ReleaseURL    string `json:"release_url"`
 }
 
 type importPayload struct {
@@ -1394,7 +1404,7 @@ func (app *application) handleUpdateInstall(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusBadGateway, err)
 		return
 	}
-	if err := verifyDownloadedAsset(r.Context(), info.AssetURL, targetPath); err != nil {
+	if err := verifyDownloadedAsset(r.Context(), info.ChecksumURL, targetPath); err != nil {
 		_ = os.Remove(targetPath)
 		writeErr(w, http.StatusBadGateway, err)
 		return
@@ -3555,35 +3565,60 @@ func parseOptionalPositiveInt64(raw string) (int64, error) {
 }
 
 func fetchLatestUpdateInfo(ctx context.Context) (updateInfo, error) {
-	release, err := fetchLatestGitHubRelease(ctx)
+	return fetchUpdateInfoFromManifest(ctx, updateManifestURL)
+}
+
+func fetchUpdateInfoFromManifest(ctx context.Context, endpoint string) (updateInfo, error) {
+	manifest, err := fetchUpdateManifest(ctx, endpoint)
 	if err != nil {
 		return updateInfo{}, err
 	}
 
-	latest := strings.TrimSpace(release.TagName)
+	latest := strings.TrimSpace(manifest.LatestVersion)
 	info := updateInfo{
 		CurrentVersion: appVersion,
 		LatestVersion:  latest,
-		ReleaseURL:     release.HTMLURL,
+		ReleaseURL:     manifest.ReleaseURL,
+		AssetName:      manifest.AssetName,
+		AssetURL:       manifest.AssetURL,
+		ChecksumURL:    manifest.ChecksumURL,
 		CanInstall:     runtime.GOOS == "windows",
 	}
 	if latest == "" {
-		return info, fmt.Errorf("github-release enthaelt keine version")
-	}
-
-	asset := findReleaseAsset(release, latest)
-	if asset.Name != "" {
-		info.AssetName = asset.Name
-		info.AssetURL = asset.BrowserDownloadURL
+		return info, fmt.Errorf("update-manifest enthaelt keine version")
 	}
 	info.UpdateAvailable = isNewerVersion(appVersion, latest)
 	if !info.CanInstall {
 		info.Message = "installation ist nur unter Windows moeglich"
-	} else if info.AssetURL == "" {
+	} else if info.AssetURL == "" || info.AssetName == "" || info.ChecksumURL == "" {
 		info.CanInstall = false
-		info.Message = "im neuesten release wurde keine passende windows-exe gefunden"
+		info.Message = "update-manifest enthaelt keine vollstaendigen windows-downloads"
 	}
 	return info, nil
+}
+
+func fetchUpdateManifest(ctx context.Context, endpoint string) (updateManifest, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return updateManifest{}, err
+	}
+	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	response, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return updateManifest{}, fmt.Errorf("update-manifest konnte nicht geladen werden: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return updateManifest{}, fmt.Errorf("update-manifest konnte nicht geladen werden: status %d", response.StatusCode)
+	}
+	var manifest updateManifest
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&manifest); err != nil {
+		return updateManifest{}, fmt.Errorf("update-manifest ist ungueltig: %w", err)
+	}
+	if strings.TrimSpace(manifest.LatestVersion) == "" || strings.TrimSpace(manifest.AssetName) == "" || strings.TrimSpace(manifest.AssetURL) == "" || strings.TrimSpace(manifest.ChecksumURL) == "" {
+		return updateManifest{}, fmt.Errorf("update-manifest ist unvollstaendig")
+	}
+	return manifest, nil
 }
 
 func fetchLatestGitHubRelease(ctx context.Context) (githubRelease, error) {
@@ -3733,8 +3768,7 @@ func downloadFile(ctx context.Context, sourceURL, targetPath string) error {
 	return nil
 }
 
-func verifyDownloadedAsset(ctx context.Context, assetURL, targetPath string) error {
-	checksumURL := assetURL + ".sha256"
+func verifyDownloadedAsset(ctx context.Context, checksumURL, targetPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
 	if err != nil {
 		return err

@@ -680,6 +680,31 @@ func TestFetchGitHubReleaseExplainsRateLimit(t *testing.T) {
 	}
 }
 
+func TestFetchUpdateInfoFromManifestAvoidsGitHubAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/version.json" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, updateManifest{
+			LatestVersion: "3.3",
+			AssetName:     "Lesezeichen-Hub_3.3.exe",
+			AssetURL:      "https://example.test/Lesezeichen-Hub_3.3.exe",
+			ChecksumURL:   "https://example.test/Lesezeichen-Hub_3.3.exe.sha256",
+			ReleaseURL:    "https://example.test/releases/3.3",
+		})
+	}))
+	defer server.Close()
+
+	info, err := fetchUpdateInfoFromManifest(context.Background(), server.URL+"/version.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.LatestVersion != "3.3" || info.AssetName != "Lesezeichen-Hub_3.3.exe" || info.ChecksumURL == "" {
+		t.Fatalf("update info = %+v, want manifest values", info)
+	}
+}
+
 func TestDeletingGroupCascadesToItsBookmarks(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "data.db")
 	db, err := sql.Open("sqlite", databaseDSN(dbPath))
