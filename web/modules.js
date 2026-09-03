@@ -1,4 +1,5 @@
 const els = {
+  importForm: document.getElementById("module-import-form"),
   catalogList: document.getElementById("catalog-list"),
   catalogSummary: document.getElementById("catalog-summary"),
   list: document.getElementById("modules-list"),
@@ -7,8 +8,35 @@ const els = {
   status: document.getElementById("status"),
 };
 
+els.importForm.addEventListener("submit", onImportModule);
 els.check.addEventListener("click", () => loadModules(true));
 loadModules();
+
+async function onImportModule(event) {
+  event.preventDefault();
+  const formData = new FormData(event.target);
+  const submitButton = event.target.querySelector('button[type="submit"]');
+  try {
+    submitButton.disabled = true;
+    setStatus("Webapp wird heruntergeladen und eingerichtet...");
+    await request("/api/module-import", {
+      method: "POST",
+      body: JSON.stringify({
+        name: formData.get("name")?.toString().trim(),
+        source_url: formData.get("source_url")?.toString().trim(),
+        notes: formData.get("notes")?.toString().trim(),
+        tags: parseTagsInput(formData.get("tags")),
+      }),
+    });
+    event.target.reset();
+    setStatus("Webapp wurde als Modul eingerichtet.");
+    await loadModules();
+  } catch (error) {
+    setStatus(error.message || "Webapp konnte nicht eingerichtet werden.", true);
+  } finally {
+    submitButton.disabled = false;
+  }
+}
 
 async function loadModules(showResult = false) {
   els.check.disabled = true;
@@ -120,12 +148,20 @@ function renderModules(modules) {
   }
 
   for (const module of modules) {
+    const sourceLabel = module.installed_version === "external"
+      ? "Externe Quelle"
+      : module.managed
+        ? "Aus dem Hub-Katalog"
+        : "Lokaler Ordner";
+    const versionLabel = module.installed_version && module.installed_version !== "external"
+      ? ` · Version ${escapeHTML(module.installed_version)}`
+      : "";
     const card = document.createElement("article");
     card.className = `registered-module ${module.available ? "is-installed" : ""}`;
     card.innerHTML = `
       <div class="registered-module-main">
         <span class="module-mark" aria-hidden="true">▦</span>
-        <div class="registered-module-title"><strong>${escapeHTML(module.name)}</strong><span>${module.managed ? "Aus dem Hub-Katalog" : "Lokaler Ordner"}${module.installed_version ? ` · Version ${escapeHTML(module.installed_version)}` : ""}</span></div>
+        <div class="registered-module-title"><strong>${escapeHTML(module.name)}</strong><span>${sourceLabel}${versionLabel}</span></div>
         <span class="module-status ${module.available ? "is-available" : "is-missing"}">${module.available ? "Verfügbar" : "Nicht erreichbar"}</span>
         <a class="secondary-link ${module.available ? "" : "is-disabled"}" href="${escapeHTML(module.url)}" target="_blank" rel="noreferrer" ${module.available ? "" : 'aria-disabled="true"'}>Öffnen</a>
       </div>
@@ -217,4 +253,11 @@ function escapeHTML(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function parseTagsInput(value) {
+  return String(value || "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
 }

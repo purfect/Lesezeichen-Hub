@@ -328,6 +328,9 @@ body {
 .modules-page { gap: 24px; max-width: 1280px; margin: 0 auto; }
 .modules-page .panel { padding: clamp(18px, 2.4vw, 28px); }
 .section-kicker { margin: 0 0 4px; color: var(--accent); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.module-import-form { display: grid; grid-template-columns: minmax(160px, 0.55fr) minmax(260px, 1fr); gap: 12px; margin-top: 18px; }
+.module-import-form label { min-width: 0; }
+.module-import-form button { align-self: end; justify-self: start; }
 .module-catalog-list, .module-registry-list { display: grid; gap: 8px; margin-top: 20px; }
 .catalog-unavailable { padding: 16px; border: 1px dashed var(--line); background: rgba(10, 19, 30, 0.34); color: var(--muted); }
 .catalog-unavailable strong { color: var(--ink); }
@@ -1155,6 +1158,10 @@ button.danger:hover {
   .modules-page .panel { padding: 16px; }
 
   .modules-page .panel-head { align-items: start; flex-direction: column; }
+
+  .module-import-form { grid-template-columns: 1fr; }
+
+  .module-import-form button { justify-self: stretch; }
 
   .catalog-module { grid-template-columns: 1fr; gap: 10px; }
 
