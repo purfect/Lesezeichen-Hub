@@ -69,6 +69,48 @@ func TestValidateURL(t *testing.T) {
 	}
 }
 
+func TestNormalizeRemoteModuleSourceURL(t *testing.T) {
+	tests := []struct {
+		value        string
+		wantDownload string
+		wantSource   string
+		valid        bool
+	}{
+		{
+			value:        "https://example.com/app.zip",
+			wantDownload: "https://example.com/app.zip",
+			wantSource:   "https://example.com/app.zip",
+			valid:        true,
+		},
+		{
+			value:        "https://github.com/acme/tools",
+			wantDownload: "https://github.com/acme/tools/archive/refs/heads/main.zip",
+			wantSource:   "https://github.com/acme/tools",
+			valid:        true,
+		},
+		{
+			value:        "https://github.com/acme/tools/tree/develop",
+			wantDownload: "https://github.com/acme/tools/archive/refs/heads/develop.zip",
+			wantSource:   "https://github.com/acme/tools",
+			valid:        true,
+		},
+		{value: "https://example.com/app", valid: false},
+	}
+
+	for _, test := range tests {
+		downloadURL, sourceURL, err := normalizeRemoteModuleSourceURL(test.value)
+		if (err == nil) != test.valid {
+			t.Fatalf("normalizeRemoteModuleSourceURL(%q) error = %v, valid = %t", test.value, err, test.valid)
+		}
+		if err != nil {
+			continue
+		}
+		if downloadURL != test.wantDownload || sourceURL != test.wantSource {
+			t.Fatalf("normalizeRemoteModuleSourceURL(%q) = (%q, %q), want (%q, %q)", test.value, downloadURL, sourceURL, test.wantDownload, test.wantSource)
+		}
+	}
+}
+
 func TestNormalizeBookmarkURL(t *testing.T) {
 	tests := []struct {
 		value string
@@ -515,9 +557,10 @@ func TestExternalModuleArchiveCanBeInstalled(t *testing.T) {
 
 	var moduleID int64
 	var moduleRoot string
+	var sourceURL string
 	var installedVersion string
 	var managed int
-	if err := db.QueryRow(`SELECT id, root_path, installed_version, managed FROM modules WHERE name = 'Externe Webapp'`).Scan(&moduleID, &moduleRoot, &installedVersion, &managed); err != nil {
+	if err := db.QueryRow(`SELECT id, root_path, source_url, installed_version, managed FROM modules WHERE name = 'Externe Webapp'`).Scan(&moduleID, &moduleRoot, &sourceURL, &installedVersion, &managed); err != nil {
 		t.Fatal(err)
 	}
 	if managed != 1 {
@@ -525,6 +568,9 @@ func TestExternalModuleArchiveCanBeInstalled(t *testing.T) {
 	}
 	if installedVersion != "external" {
 		t.Fatalf("installed version = %q, want external", installedVersion)
+	}
+	if sourceURL != source.URL+"/webapp.zip" {
+		t.Fatalf("source url = %q, want %q", sourceURL, source.URL+"/webapp.zip")
 	}
 	if _, err := os.Stat(filepath.Join(moduleRoot, "index.html")); err != nil {
 		t.Fatalf("index.html wurde nicht installiert: %v", err)
@@ -539,6 +585,82 @@ func TestExternalModuleArchiveCanBeInstalled(t *testing.T) {
 	}
 	if tags != "tools,extern" {
 		t.Fatalf("tags = %q, want tools,extern", tags)
+	}
+}
+
+func TestExternalModuleArchiveCanBeReloaded(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	makeArchive := func(indexBody string) []byte {
+		var archive bytes.Buffer
+		zipWriter := zip.NewWriter(&archive)
+		indexFile, err := zipWriter.Create("webapp-main/index.html")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := indexFile.Write([]byte(indexBody)); err != nil {
+			t.Fatal(err)
+		}
+		if err := zipWriter.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return archive.Bytes()
+	}
+	firstArchive := makeArchive("<h1>Version 1</h1>")
+	secondArchive := makeArchive("<h1>Version 2</h1>")
+	archiveRequests := 0
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/webapp.zip" {
+			http.NotFound(w, r)
+			return
+		}
+		archiveRequests++
+		w.Header().Set("Content-Type", "application/zip")
+		if archiveRequests == 1 {
+			_, _ = w.Write(firstArchive)
+			return
+		}
+		_, _ = w.Write(secondArchive)
+	}))
+	defer source.Close()
+
+	app := &application{db: db, moduleInstallDir: testTempDir(t)}
+	body, err := json.Marshal(map[string]any{
+		"name":       "Externe Webapp",
+		"source_url": source.URL + "/webapp.zip",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	app.handleModuleImport(response, httptest.NewRequest(http.MethodPost, "/api/module-import", bytes.NewReader(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("install status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	var moduleID int64
+	var moduleRoot string
+	if err := db.QueryRow(`SELECT id, root_path FROM modules WHERE name = 'Externe Webapp'`).Scan(&moduleID, &moduleRoot); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(filepath.Join(moduleRoot, "index.html")); err != nil || string(body) != "<h1>Version 1</h1>" {
+		t.Fatalf("installierte index.html = %q, error = %v", string(body), err)
+	}
+
+	updateResponse := httptest.NewRecorder()
+	app.handleModuleRoutes(updateResponse, httptest.NewRequest(http.MethodPost, "/api/modules/"+strconv.FormatInt(moduleID, 10)+"/update", nil))
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", updateResponse.Code, updateResponse.Body.String())
+	}
+	if err := db.QueryRow(`SELECT root_path FROM modules WHERE id = ?`, moduleID).Scan(&moduleRoot); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(filepath.Join(moduleRoot, "index.html")); err != nil || string(body) != "<h1>Version 2</h1>" {
+		t.Fatalf("aktualisierte index.html = %q, error = %v", string(body), err)
 	}
 }
 

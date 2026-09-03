@@ -148,6 +148,7 @@ function renderModules(modules) {
   }
 
   for (const module of modules) {
+    const isExternal = module.installed_version === "external";
     const sourceLabel = module.installed_version === "external"
       ? "Externe Quelle"
       : module.managed
@@ -168,11 +169,12 @@ function renderModules(modules) {
       <details class="module-settings">
         <summary>Verwalten</summary>
         ${module.error ? `<p class="module-error">${escapeHTML(module.error)}</p>` : ""}
+        ${module.source_url ? `<p class="module-source">Quelle: <a href="${escapeHTML(module.source_url)}" target="_blank" rel="noreferrer">${escapeHTML(module.source_url)}</a></p>` : ""}
         <form class="module-edit-form">
         <label>Name<input name="name" value="${escapeHTML(module.name)}" maxlength="100" required /></label>
         <label>Lokaler Ordner<span class="path-picker"><input name="path" value="${escapeHTML(module.path)}" required /><button class="ghost choose-path" type="button">Ordner wählen</button></span></label>
         <div class="module-actions">
-          ${module.managed && !module.installed_version ? '<button class="update-module" type="button">Aktualisieren</button>' : ""}
+          ${isExternal ? '<button class="update-module" type="button">Neu laden</button>' : (module.managed && !module.installed_version ? '<button class="update-module" type="button">Aktualisieren</button>' : "")}
           <button type="submit">Änderungen speichern</button>
           <button class="danger delete-module" type="button">Vollständig löschen</button>
         </div>
@@ -192,16 +194,17 @@ function renderModules(modules) {
     });
     card.querySelector(".update-module")?.addEventListener("click", async (event) => {
       const updateButton = event.currentTarget;
+      const idleText = isExternal ? "Neu laden" : "Aktualisieren";
       try {
         updateButton.disabled = true;
-        updateButton.textContent = "Wird aktualisiert...";
-        setStatus(`${module.name} wird aktualisiert...`);
+        updateButton.textContent = isExternal ? "Wird neu geladen..." : "Wird aktualisiert...";
+        setStatus(isExternal ? `${module.name} wird neu geladen...` : `${module.name} wird aktualisiert...`);
         await request(`/api/modules/${module.id}/update`, { method: "POST" });
-        setStatus("Modul aktualisiert.");
+        setStatus(isExternal ? "Modul neu geladen." : "Modul aktualisiert.");
         await loadModules();
       } catch (error) {
         updateButton.disabled = false;
-        updateButton.textContent = "Aktualisieren";
+        updateButton.textContent = idleText;
         setStatus(error.message || "Modul konnte nicht aktualisiert werden.", true);
       }
     });
