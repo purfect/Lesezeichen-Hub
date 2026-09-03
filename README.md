@@ -55,6 +55,8 @@ Für die GitHub-API kann optional `GITHUB_TOKEN` gesetzt werden. Ohne Token verw
 
 Über **Hinzufuegen > Lokales Modul** kann ein Ordner mit einer `index.html` eingebunden werden, zum Beispiel der Projektordner von `werkplan`. Nach der Auswahl einer bestehenden Gruppe kann der Ordner über den Windows-Dialog **Ordner waehlen** ausgesucht werden. Der Hub speichert den lokalen Ordner und erzeugt in der ausgewählten Gruppe ein Start-Lesezeichen.
 
+Auf der Seite **Module** kann ausserdem eine statische Webapp aus einer externen Quelle geladen werden. Die URL muss direkt auf ein ZIP-Archiv zeigen; darin sucht der Hub nach einer `index.html` im Archiv-Root oder in `public`, `static` beziehungsweise `web`. Das Archiv wird nach `modules` beziehungsweise `MODULES_PATH` entpackt, unter `/modules/...` ausgeliefert und als Start-Lesezeichen in der Gruppe **Module** eingetragen.
+
 Für jedes Modul können zusätzlich Notizen und Tags vergeben werden. Da ein Modul als normales Lesezeichen gespeichert wird, erscheint es automatisch in Suche, Favoriten, Tags, Exporten und Notizen. Wird ein Modul archiviert oder sein Lesezeichen gelöscht, kann es mit demselben Namen erneut angelegt werden; verwaiste oder archivierte Moduldefinitionen werden dabei wiederverwendet beziehungsweise reaktiviert.
 
 Die Dateien werden über den Hub unter `/modules/...` ausgeliefert, sodass relative CSS-, JavaScript- und Bildpfade der lokalen Anwendung funktionieren.

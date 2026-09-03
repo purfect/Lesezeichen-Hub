@@ -33,7 +33,10 @@ func openTestDB(t *testing.T) *sql.DB {
 func testTempDir(t *testing.T) string {
 	t.Helper()
 
-	root := filepath.Join(".runtime", "testdata")
+	root, err := filepath.Abs(filepath.Join(".runtime", "testdata"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(root, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -144,12 +147,14 @@ func TestModuleDirectoryServesIndexFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(moduleDir, "index.html"), []byte("<h1>Modul</h1>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Testmodul", moduleDir); err != nil {
+	result, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Testmodul", moduleDir)
+	if err != nil {
 		t.Fatal(err)
 	}
+	moduleID, _ := result.LastInsertId()
 
 	app := &application{db: db}
-	request := httptest.NewRequest(http.MethodGet, "/modules/1/", nil)
+	request := httptest.NewRequest(http.MethodGet, "/modules/"+strconv.FormatInt(moduleID, 10)+"/", nil)
 	response := httptest.NewRecorder()
 	app.handleModuleFiles(response, request)
 
@@ -172,12 +177,14 @@ func TestModuleIndexURLIsServedWithoutRedirect(t *testing.T) {
 	if err := os.WriteFile(indexPath, []byte("<h1>Version 1</h1>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Testmodul", moduleDir); err != nil {
+	result, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Testmodul", moduleDir)
+	if err != nil {
 		t.Fatal(err)
 	}
+	moduleID, _ := result.LastInsertId()
 
 	app := &application{db: db}
-	request := httptest.NewRequest(http.MethodGet, "/modules/1/index.html", nil)
+	request := httptest.NewRequest(http.MethodGet, "/modules/"+strconv.FormatInt(moduleID, 10)+"/index.html", nil)
 	response := httptest.NewRecorder()
 	app.handleModuleFiles(response, request)
 
@@ -206,13 +213,15 @@ func TestModuleFileChangesAreServedImmediately(t *testing.T) {
 	if err := os.WriteFile(indexPath, []byte("<h1>Version 1</h1>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Testmodul", moduleDir); err != nil {
+	result, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Testmodul", moduleDir)
+	if err != nil {
 		t.Fatal(err)
 	}
+	moduleID, _ := result.LastInsertId()
 
 	app := &application{db: db}
 	first := httptest.NewRecorder()
-	app.handleModuleFiles(first, httptest.NewRequest(http.MethodGet, "/modules/1/index.html", nil))
+	app.handleModuleFiles(first, httptest.NewRequest(http.MethodGet, "/modules/"+strconv.FormatInt(moduleID, 10)+"/index.html", nil))
 	if first.Body.String() != "<h1>Version 1</h1>" {
 		t.Fatalf("body = %q, want erste Version", first.Body.String())
 	}
@@ -222,7 +231,7 @@ func TestModuleFileChangesAreServedImmediately(t *testing.T) {
 	}
 
 	second := httptest.NewRecorder()
-	app.handleModuleFiles(second, httptest.NewRequest(http.MethodGet, "/modules/1/index.html", nil))
+	app.handleModuleFiles(second, httptest.NewRequest(http.MethodGet, "/modules/"+strconv.FormatInt(moduleID, 10)+"/index.html", nil))
 	if second.Body.String() != "<h1>Version 2</h1>" {
 		t.Errorf("body = %q, geaenderte Datei wurde nicht ausgeliefert", second.Body.String())
 	}
@@ -247,13 +256,15 @@ func TestModuleFilesRejectSymlinkOutsideRoot(t *testing.T) {
 	if err := os.Symlink(outsideFile, linkPath); err != nil {
 		t.Skipf("Symlink kann auf diesem System nicht angelegt werden: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Testmodul", moduleDir); err != nil {
+	result, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Testmodul", moduleDir)
+	if err != nil {
 		t.Fatal(err)
 	}
+	moduleID, _ := result.LastInsertId()
 
 	app := &application{db: db}
 	response := httptest.NewRecorder()
-	app.handleModuleFiles(response, httptest.NewRequest(http.MethodGet, "/modules/1/secret.txt", nil))
+	app.handleModuleFiles(response, httptest.NewRequest(http.MethodGet, "/modules/"+strconv.FormatInt(moduleID, 10)+"/secret.txt", nil))
 
 	if response.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", response.Code, http.StatusNotFound)
@@ -454,6 +465,80 @@ func TestCatalogModuleCanBeInstalledAndReportedAsInstalled(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Dir(rootPath)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("verwalteter Modulordner wurde nicht entfernt: %v", err)
+	}
+}
+
+func TestExternalModuleArchiveCanBeInstalled(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	var archive bytes.Buffer
+	zipWriter := zip.NewWriter(&archive)
+	indexFile, err := zipWriter.Create("webapp-main/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexFile.Write([]byte("<h1>Externe Webapp</h1>")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/webapp.zip" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(archive.Bytes())
+	}))
+	defer source.Close()
+
+	app := &application{db: db, moduleInstallDir: testTempDir(t)}
+	body, err := json.Marshal(map[string]any{
+		"name":       "Externe Webapp",
+		"source_url": source.URL + "/webapp.zip",
+		"notes":      "Aus Testquelle",
+		"tags":       []string{"tools", "extern"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	app.handleModuleImport(response, httptest.NewRequest(http.MethodPost, "/api/module-import", bytes.NewReader(body)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("install status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	var moduleID int64
+	var moduleRoot string
+	var installedVersion string
+	var managed int
+	if err := db.QueryRow(`SELECT id, root_path, installed_version, managed FROM modules WHERE name = 'Externe Webapp'`).Scan(&moduleID, &moduleRoot, &installedVersion, &managed); err != nil {
+		t.Fatal(err)
+	}
+	if managed != 1 {
+		t.Fatalf("managed = %d, want 1", managed)
+	}
+	if installedVersion != "external" {
+		t.Fatalf("installed version = %q, want external", installedVersion)
+	}
+	if _, err := os.Stat(filepath.Join(moduleRoot, "index.html")); err != nil {
+		t.Fatalf("index.html wurde nicht installiert: %v", err)
+	}
+	var bookmarkURL, tags string
+	if err := db.QueryRow(`SELECT url, tags FROM bookmarks WHERE title = 'Externe Webapp'`).Scan(&bookmarkURL, &tags); err != nil {
+		t.Fatal(err)
+	}
+	wantURL := "/modules/" + strconv.FormatInt(moduleID, 10) + "/index.html"
+	if bookmarkURL != wantURL {
+		t.Fatalf("bookmark url = %q, want %q", bookmarkURL, wantURL)
+	}
+	if tags != "tools,extern" {
+		t.Fatalf("tags = %q, want tools,extern", tags)
 	}
 }
 
