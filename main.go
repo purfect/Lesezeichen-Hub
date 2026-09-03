@@ -127,6 +127,7 @@ type localModule struct {
 	Name             string `json:"name"`
 	Path             string `json:"path"`
 	URL              string `json:"url"`
+	SourceURL        string `json:"source_url,omitempty"`
 	InstalledVersion string `json:"installed_version,omitempty"`
 	Available        bool   `json:"available"`
 	Managed          bool   `json:"managed"`
@@ -470,7 +471,7 @@ func (app *application) handleModules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) listModules(w http.ResponseWriter, r *http.Request) {
-	rows, err := app.db.QueryContext(r.Context(), `SELECT id, name, root_path, installed_version, managed FROM modules ORDER BY lower(name), id`)
+	rows, err := app.db.QueryContext(r.Context(), `SELECT id, name, root_path, source_url, installed_version, managed FROM modules ORDER BY lower(name), id`)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -480,7 +481,7 @@ func (app *application) listModules(w http.ResponseWriter, r *http.Request) {
 	modules := make([]localModule, 0)
 	for rows.Next() {
 		var item localModule
-		if err := rows.Scan(&item.ID, &item.Name, &item.Path, &item.InstalledVersion, &item.Managed); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Path, &item.SourceURL, &item.InstalledVersion, &item.Managed); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -777,7 +778,7 @@ func (app *application) installCatalogModule(ctx context.Context, repositoryName
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO groups(name, description) VALUES('Module', 'Installierte Module')`); err != nil {
 		return catalogModule{}, err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO modules(name, root_path, installed_version, managed) VALUES(?, ?, ?, 1)`, selected.Name, moduleRoot, selected.Version)
+	result, err := tx.ExecContext(ctx, `INSERT INTO modules(name, root_path, source_url, installed_version, managed) VALUES(?, ?, ?, ?, 1)`, selected.Name, moduleRoot, selected.RepositoryURL, selected.Version)
 	if err != nil {
 		return catalogModule{}, fmt.Errorf("modul konnte nicht registriert werden: %w", err)
 	}
@@ -802,7 +803,8 @@ func (app *application) installExternalModuleArchive(ctx context.Context, rawNam
 	if name == "" || sourceURL == "" {
 		return catalogModule{}, fmt.Errorf("name und url sind erforderlich")
 	}
-	if err := validateRemoteModuleArchiveURL(sourceURL); err != nil {
+	downloadURL, displaySourceURL, err := normalizeRemoteModuleSourceURL(sourceURL)
+	if err != nil {
 		return catalogModule{}, err
 	}
 
@@ -810,7 +812,7 @@ func (app *application) installExternalModuleArchive(ctx context.Context, rawNam
 	if installBase == "" {
 		installBase = "./modules"
 	}
-	installBase, err := filepath.Abs(installBase)
+	installBase, err = filepath.Abs(installBase)
 	if err != nil {
 		return catalogModule{}, fmt.Errorf("modulordner ist ungueltig")
 	}
@@ -829,7 +831,7 @@ func (app *application) installExternalModuleArchive(ctx context.Context, rawNam
 	archivePath := archive.Name()
 	archive.Close()
 	defer os.Remove(archivePath)
-	if err := downloadFile(ctx, sourceURL, archivePath); err != nil {
+	if err := downloadFile(ctx, downloadURL, archivePath); err != nil {
 		return catalogModule{}, err
 	}
 
@@ -868,7 +870,7 @@ func (app *application) installExternalModuleArchive(ctx context.Context, rawNam
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO groups(name, description) VALUES('Module', 'Installierte Module')`); err != nil {
 		return catalogModule{}, err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO modules(name, root_path, installed_version, managed) VALUES(?, ?, 'external', 1)`, name, moduleRoot)
+	result, err := tx.ExecContext(ctx, `INSERT INTO modules(name, root_path, source_url, installed_version, managed) VALUES(?, ?, ?, 'external', 1)`, name, moduleRoot, displaySourceURL)
 	if err != nil {
 		return catalogModule{}, fmt.Errorf("modul konnte nicht registriert werden: %w", err)
 	}
@@ -884,10 +886,130 @@ func (app *application) installExternalModuleArchive(ctx context.Context, rawNam
 	return catalogModule{
 		Name:          name,
 		Description:   strings.TrimSpace(rawNotes),
-		RepositoryURL: sourceURL,
+		RepositoryURL: displaySourceURL,
 		Installed:     true,
 		LocalID:       moduleID,
 		LocalURL:      moduleURL,
+	}, nil
+}
+
+func (app *application) updateModule(ctx context.Context, moduleID int64) (catalogModule, error) {
+	var installedVersion, sourceURL string
+	if err := app.db.QueryRowContext(ctx, `SELECT installed_version, source_url FROM modules WHERE id = ?`, moduleID).Scan(&installedVersion, &sourceURL); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return catalogModule{}, fmt.Errorf("modul nicht gefunden")
+		}
+		return catalogModule{}, err
+	}
+	if installedVersion == "external" {
+		if strings.TrimSpace(sourceURL) == "" {
+			return catalogModule{}, fmt.Errorf("externe quelle ist fuer dieses modul nicht gespeichert")
+		}
+		return app.updateExternalModuleArchive(ctx, moduleID)
+	}
+	return app.updateCatalogModule(ctx, moduleID)
+}
+
+func (app *application) updateExternalModuleArchive(ctx context.Context, moduleID int64) (catalogModule, error) {
+	var moduleName, moduleRoot, sourceURL string
+	if err := app.db.QueryRowContext(ctx, `SELECT name, root_path, source_url FROM modules WHERE id = ?`, moduleID).Scan(&moduleName, &moduleRoot, &sourceURL); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return catalogModule{}, fmt.Errorf("modul nicht gefunden")
+		}
+		return catalogModule{}, err
+	}
+	downloadURL, displaySourceURL, err := normalizeRemoteModuleSourceURL(sourceURL)
+	if err != nil {
+		return catalogModule{}, err
+	}
+
+	installBase := strings.TrimSpace(app.moduleInstallDir)
+	if installBase == "" {
+		installBase = "./modules"
+	}
+	installBase, err = filepath.Abs(installBase)
+	if err != nil {
+		return catalogModule{}, fmt.Errorf("modulordner ist ungueltig")
+	}
+	if err := os.MkdirAll(installBase, 0755); err != nil {
+		return catalogModule{}, fmt.Errorf("modulordner konnte nicht erstellt werden: %w", err)
+	}
+
+	currentTopLevel, err := managedModuleTopLevel(installBase, moduleRoot)
+	if err != nil {
+		return catalogModule{}, err
+	}
+	archive, err := os.CreateTemp(installBase, ".module-update-*.zip")
+	if err != nil {
+		return catalogModule{}, err
+	}
+	archivePath := archive.Name()
+	archive.Close()
+	defer os.Remove(archivePath)
+	if err := downloadFile(ctx, downloadURL, archivePath); err != nil {
+		return catalogModule{}, err
+	}
+
+	staging, err := os.MkdirTemp(installBase, ".module-update-*")
+	if err != nil {
+		return catalogModule{}, err
+	}
+	removeStaging := true
+	defer func() {
+		if removeStaging {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+	newRoot, err := installModuleArchiveFromFile(archivePath, staging)
+	if err != nil {
+		return catalogModule{}, err
+	}
+	rootRelative, err := filepath.Rel(staging, newRoot)
+	if err != nil {
+		return catalogModule{}, err
+	}
+
+	backup := filepath.Join(installBase, fmt.Sprintf(".module-backup-%d-%d", moduleID, time.Now().UnixNano()))
+	hasBackup := false
+	if _, err := os.Stat(currentTopLevel); err == nil {
+		if err := os.Rename(currentTopLevel, backup); err != nil {
+			return catalogModule{}, fmt.Errorf("bestehendes modul konnte nicht vorbereitet werden: %w", err)
+		}
+		hasBackup = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return catalogModule{}, fmt.Errorf("bestehendes modul konnte nicht geprueft werden: %w", err)
+	}
+
+	replaceOK := false
+	defer func() {
+		if replaceOK {
+			if hasBackup {
+				_ = os.RemoveAll(backup)
+			}
+			return
+		}
+		_ = os.RemoveAll(currentTopLevel)
+		if hasBackup {
+			_ = os.Rename(backup, currentTopLevel)
+		}
+	}()
+	if err := os.Rename(staging, currentTopLevel); err != nil {
+		return catalogModule{}, fmt.Errorf("modul konnte nicht aktualisiert werden: %w", err)
+	}
+	removeStaging = false
+	updatedRoot := filepath.Join(currentTopLevel, rootRelative)
+	if _, err := app.db.ExecContext(ctx, `UPDATE modules SET root_path = ?, source_url = ?, installed_version = 'external' WHERE id = ?`, updatedRoot, displaySourceURL, moduleID); err != nil {
+		return catalogModule{}, err
+	}
+	replaceOK = true
+
+	return catalogModule{
+		Name:          moduleName,
+		Description:   "Externe Quelle",
+		RepositoryURL: displaySourceURL,
+		Installed:     true,
+		LocalID:       moduleID,
+		LocalURL:      fmt.Sprintf("/modules/%d/index.html", moduleID),
 	}, nil
 }
 
@@ -1078,6 +1200,13 @@ func extractModuleArchive(archivePath, destination string) error {
 	return nil
 }
 
+func installModuleArchiveFromFile(archivePath, destination string) (string, error) {
+	if err := extractModuleArchive(archivePath, destination); err != nil {
+		return "", err
+	}
+	return findModuleRoot(destination)
+}
+
 func findModuleRoot(root string) (string, error) {
 	for _, relative := range []string{"", "public", "static", "web"} {
 		candidate := filepath.Join(root, relative)
@@ -1143,7 +1272,7 @@ func (app *application) handleModuleRoutes(w http.ResponseWriter, r *http.Reques
 			methodNotAllowed(w)
 			return
 		}
-		module, err := app.updateCatalogModule(r.Context(), moduleID)
+		module, err := app.updateModule(r.Context(), moduleID)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err)
 			return
@@ -1425,6 +1554,7 @@ func initializeSchema(db *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL UNIQUE,
 			root_path TEXT NOT NULL,
+			source_url TEXT NOT NULL DEFAULT '',
 			installed_version TEXT NOT NULL DEFAULT '',
 			managed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1447,6 +1577,7 @@ func initializeSchema(db *sql.DB) error {
 		`ALTER TABLE bookmarks ADD COLUMN remind_at DATETIME NULL`,
 		`ALTER TABLE modules ADD COLUMN managed INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE modules ADD COLUMN installed_version TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE modules ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`,
 	}
 
 	for _, stmt := range migrations {
@@ -3201,17 +3332,64 @@ func validateURL(raw string) error {
 }
 
 func validateRemoteModuleArchiveURL(raw string) error {
-	u, err := url.ParseRequestURI(raw)
+	_, _, err := normalizeRemoteModuleSourceURL(raw)
+	return err
+}
+
+func normalizeRemoteModuleSourceURL(raw string) (string, string, error) {
+	sourceURL := strings.TrimSpace(raw)
+	u, err := url.ParseRequestURI(sourceURL)
 	if err != nil || u.Host == "" {
-		return fmt.Errorf("url ist ungueltig")
+		return "", "", fmt.Errorf("url ist ungueltig")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("url muss mit http:// oder https:// beginnen")
+		return "", "", fmt.Errorf("url muss mit http:// oder https:// beginnen")
 	}
-	if !strings.HasSuffix(strings.ToLower(u.Path), ".zip") {
-		return fmt.Errorf("url muss direkt auf ein zip-archiv zeigen")
+	if strings.HasSuffix(strings.ToLower(u.Path), ".zip") {
+		return sourceURL, sourceURL, nil
 	}
-	return nil
+	if strings.EqualFold(u.Host, "github.com") || strings.EqualFold(u.Host, "www.github.com") {
+		downloadURL, displayURL, ok := githubArchiveURLFromRepoURL(u)
+		if ok {
+			return downloadURL, displayURL, nil
+		}
+	}
+	return "", "", fmt.Errorf("url muss direkt auf ein zip-archiv oder ein github-repository zeigen")
+}
+
+func githubArchiveURLFromRepoURL(u *url.URL) (string, string, bool) {
+	parts := strings.Split(strings.Trim(u.EscapedPath(), "/"), "/")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	owner, err := url.PathUnescape(parts[0])
+	if err != nil {
+		return "", "", false
+	}
+	repo, err := url.PathUnescape(parts[1])
+	if err != nil {
+		return "", "", false
+	}
+	repo = strings.TrimSuffix(repo, ".git")
+	if owner == "" || repo == "" {
+		return "", "", false
+	}
+	branch := "main"
+	if len(parts) >= 4 && parts[2] == "tree" {
+		branchParts := make([]string, 0, len(parts)-3)
+		for _, part := range parts[3:] {
+			decoded, err := url.PathUnescape(part)
+			if err != nil || decoded == "" {
+				return "", "", false
+			}
+			branchParts = append(branchParts, decoded)
+		}
+		branch = strings.Join(branchParts, "/")
+	} else if len(parts) > 2 {
+		return "", "", false
+	}
+	baseRepoURL := "https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo)
+	return baseRepoURL + "/archive/refs/heads/" + url.PathEscape(branch) + ".zip", baseRepoURL, true
 }
 
 func safeModuleDirectoryName(name string) string {

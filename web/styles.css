@@ -353,6 +353,8 @@ body {
 .module-settings { border-top: 1px solid var(--line); background: rgba(13, 22, 36, 0.45); }
 .module-settings summary { padding: 10px 15px; color: var(--muted); cursor: pointer; font-size: 0.82rem; font-weight: 700; }
 .module-settings[open] summary { color: var(--ink); }
+.module-source { margin: 0; padding: 0 15px 10px; color: var(--muted); font-size: 0.82rem; overflow-wrap: anywhere; }
+.module-source a { color: var(--accent); }
 .module-edit-form { display: grid; grid-template-columns: minmax(150px, 0.45fr) minmax(260px, 1fr); gap: 12px; padding: 4px 15px 15px; }
 .module-edit-form .module-actions { grid-column: 1 / -1; justify-content: flex-start; }
 

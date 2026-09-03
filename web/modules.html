@@ -26,16 +26,16 @@
       <div class="panel-head">
         <div>
           <p class="section-kicker">Externe Quelle</p>
-          <h2>Webapp aus ZIP laden</h2>
-          <p class="search-info">Statische Webapps mit index.html aus einem direkten ZIP-Link installieren.</p>
+          <h2>Webapp importieren</h2>
+          <p class="search-info">Statische Webapps mit index.html aus einem GitHub-Repository oder ZIP-Link installieren.</p>
         </div>
       </div>
       <form id="module-import-form" class="module-import-form">
         <label>Name<input name="name" maxlength="100" required placeholder="z.B. Rechner" /></label>
-        <label>ZIP-URL<input name="source_url" type="url" required placeholder="https://example.com/app.zip" /></label>
+        <label>Quelle<input name="source_url" type="url" required placeholder="https://github.com/user/repo oder https://example.com/app.zip" /></label>
         <label>Notiz<textarea name="notes" rows="2" maxlength="500" placeholder="Quelle oder Hinweis (optional)"></textarea></label>
         <label>Tags<input name="tags" placeholder="z.B. tools, webapp" /></label>
-        <button type="submit">Webapp laden</button>
+        <button type="submit">Webapp importieren</button>
       </form>
     </section>
 
