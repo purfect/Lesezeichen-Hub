@@ -3588,12 +3588,19 @@ func fetchLatestUpdateInfo(ctx context.Context) (updateInfo, error) {
 
 func fetchLatestGitHubRelease(ctx context.Context) (githubRelease, error) {
 	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", githubOwner, githubRepo)
+	return fetchGitHubRelease(ctx, endpoint)
+}
+
+func fetchGitHubRelease(ctx context.Context, endpoint string) (githubRelease, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return githubRelease{}, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
@@ -3601,6 +3608,9 @@ func fetchLatestGitHubRelease(ctx context.Context) (githubRelease, error) {
 		return githubRelease{}, fmt.Errorf("github konnte nicht erreicht werden: %w", err)
 	}
 	defer resp.Body.Close()
+	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) && resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		return githubRelease{}, fmt.Errorf("github-api-limit erreicht; bitte spaeter erneut versuchen oder GITHUB_TOKEN setzen")
+	}
 	if resp.StatusCode != http.StatusOK {
 		return githubRelease{}, fmt.Errorf("github-release-check fehlgeschlagen: status %d", resp.StatusCode)
 	}

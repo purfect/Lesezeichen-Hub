@@ -667,6 +667,19 @@ func TestFindReleaseAssetPrefersExactVersionedExe(t *testing.T) {
 	}
 }
 
+func TestFetchGitHubReleaseExplainsRateLimit(t *testing.T) {
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer github.Close()
+
+	_, err := fetchGitHubRelease(context.Background(), github.URL)
+	if err == nil || !strings.Contains(err.Error(), "github-api-limit erreicht") {
+		t.Fatalf("error = %v, want rate-limit explanation", err)
+	}
+}
+
 func TestDeletingGroupCascadesToItsBookmarks(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "data.db")
 	db, err := sql.Open("sqlite", databaseDSN(dbPath))
