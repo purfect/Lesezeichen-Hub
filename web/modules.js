@@ -42,17 +42,17 @@ function renderCatalog(modules) {
 
   for (const module of modules) {
     const card = document.createElement("article");
-    card.className = `module-card catalog-card ${module.installed ? "is-installed" : ""}`;
+    card.className = `catalog-module ${module.installed ? "is-installed" : ""}`;
     card.innerHTML = `
-      <div class="module-card-head">
-        <strong>${escapeHTML(module.name)}</strong>
-        <span class="module-status ${module.installed ? "is-available" : ""}">${module.installed ? "Eingerichtet" : "Verfügbar"}</span>
+      <div class="module-identity">
+        <span class="module-mark" aria-hidden="true">▦</span>
+        <div><strong>${escapeHTML(module.name)}</strong><p class="module-description">${escapeHTML(module.description || "Modul aus dem Lesezeichen-Hub")}</p></div>
       </div>
-      <p class="module-description">${escapeHTML(module.description || "Modul aus dem Lesezeichen-Hub")}</p>
+      <span class="module-status ${module.installed ? "is-available" : ""}">${module.installed ? "Eingerichtet" : "Verfügbar"}</span>
       <div class="module-actions">
         <a class="secondary-link" href="${escapeHTML(module.repository_url)}" target="_blank" rel="noreferrer">Repository</a>
         ${module.installed
-          ? `<button class="update-module" type="button">Aktualisieren</button><a class="primary-link" href="${escapeHTML(module.local_url)}">Öffnen</a>`
+          ? `<button class="update-module" type="button">Aktualisieren</button><a class="primary-link" href="${escapeHTML(module.local_url)}" target="_blank" rel="noreferrer">Öffnen</a>`
           : '<button class="install-module" type="button">Herunterladen &amp; einrichten</button>'}
       </div>`;
     const installButton = card.querySelector(".install-module");
@@ -103,23 +103,27 @@ function renderModules(modules) {
 
   for (const module of modules) {
     const card = document.createElement("article");
-    card.className = "module-card is-installed";
+    card.className = `registered-module ${module.available ? "is-installed" : ""}`;
     card.innerHTML = `
-      <div class="module-card-head">
-        <strong>${escapeHTML(module.name)}</strong>
+      <div class="registered-module-main">
+        <span class="module-mark" aria-hidden="true">▦</span>
+        <div class="registered-module-title"><strong>${escapeHTML(module.name)}</strong><span>${module.managed ? "Aus dem Hub-Katalog" : "Lokaler Ordner"}</span></div>
         <span class="module-status ${module.available ? "is-available" : "is-missing"}">${module.available ? "Verfügbar" : "Nicht erreichbar"}</span>
+        <a class="secondary-link ${module.available ? "" : "is-disabled"}" href="${escapeHTML(module.url)}" target="_blank" rel="noreferrer" ${module.available ? "" : 'aria-disabled="true"'}>Öffnen</a>
       </div>
-      ${module.error ? `<p class="module-error">${escapeHTML(module.error)}</p>` : ""}
-      <form class="module-edit-form">
+      <details class="module-settings">
+        <summary>Verwalten</summary>
+        ${module.error ? `<p class="module-error">${escapeHTML(module.error)}</p>` : ""}
+        <form class="module-edit-form">
         <label>Name<input name="name" value="${escapeHTML(module.name)}" maxlength="100" required /></label>
         <label>Lokaler Ordner<span class="path-picker"><input name="path" value="${escapeHTML(module.path)}" required /><button class="ghost choose-path" type="button">Ordner wählen</button></span></label>
         <div class="module-actions">
-          <a class="secondary-link ${module.available ? "" : "is-disabled"}" href="${escapeHTML(module.url)}" target="_blank" rel="noreferrer" ${module.available ? "" : 'aria-disabled="true"'}>Öffnen</a>
           ${module.managed ? '<button class="update-module" type="button">Aktualisieren</button>' : ""}
           <button type="submit">Änderungen speichern</button>
           <button class="danger delete-module" type="button">Vollständig löschen</button>
         </div>
-      </form>`;
+        </form>
+      </details>`;
 
     const form = card.querySelector("form");
     card.querySelector(".choose-path").addEventListener("click", async () => {

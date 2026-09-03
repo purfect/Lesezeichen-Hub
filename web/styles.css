@@ -306,35 +306,6 @@ body {
 .secondary-link { color: var(--ink); border: 1px solid var(--line); background: var(--card-soft); }
 .secondary-link.is-disabled { opacity: 0.45; pointer-events: none; }
 
-.modules-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 12px;
-  margin-top: 14px;
-}
-
-.module-card {
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--card-soft);
-}
-
-.module-card.is-installed {
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
-}
-
-.catalog-card {
-  display: flex;
-  min-height: 174px;
-  flex-direction: column;
-}
-
-.catalog-card .module-actions { margin-top: auto; }
-.module-description { color: var(--muted); }
-
-.module-card-head,
 .module-actions {
   display: flex;
   align-items: center;
@@ -353,7 +324,28 @@ body {
 .module-status.is-available { color: #baf3ea; border-color: var(--accent); }
 .module-status.is-missing, .module-error { color: #ffb3ba; }
 .module-error { font-size: 0.84rem; }
-.module-edit-form { margin-top: 12px; }
+.modules-page { gap: 24px; max-width: 1280px; margin: 0 auto; }
+.modules-page .panel { padding: clamp(18px, 2.4vw, 28px); }
+.section-kicker { margin: 0 0 4px; color: var(--accent); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.module-catalog-list, .module-registry-list { display: grid; gap: 8px; margin-top: 20px; }
+.catalog-module, .registered-module { border: 1px solid var(--line); background: rgba(10, 19, 30, 0.5); }
+.catalog-module { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 16px; min-height: 82px; padding: 13px 15px; }
+.catalog-module.is-installed { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
+.module-identity, .registered-module-main { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.module-mark { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line)); color: var(--accent); background: rgba(44, 183, 161, 0.08); font-size: 1rem; }
+.module-identity strong, .registered-module-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.module-description { margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
+.catalog-module .module-actions { justify-content: end; }
+.registered-module { overflow: hidden; }
+.registered-module.is-installed { border-left: 3px solid var(--accent); }
+.registered-module-main { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; min-height: 68px; padding: 12px 15px; }
+.registered-module-title span { display: block; margin-top: 3px; color: var(--muted); font-size: 0.78rem; }
+.registered-module-main .secondary-link { min-height: 36px; padding: 7px 10px; }
+.module-settings { border-top: 1px solid var(--line); background: rgba(13, 22, 36, 0.45); }
+.module-settings summary { padding: 10px 15px; color: var(--muted); cursor: pointer; font-size: 0.82rem; font-weight: 700; }
+.module-settings[open] summary { color: var(--ink); }
+.module-edit-form { display: grid; grid-template-columns: minmax(150px, 0.45fr) minmax(260px, 1fr); gap: 12px; padding: 4px 15px 15px; }
+.module-edit-form .module-actions { grid-column: 1 / -1; justify-content: flex-start; }
 
 .topbar {
   display: flex;
@@ -1142,6 +1134,39 @@ button.danger:hover {
   .group-grid {
     grid-template-columns: 1fr;
   }
+
+  .catalog-module { grid-template-columns: minmax(0, 1fr) auto; }
+
+  .catalog-module .module-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 560px) {
+  .modules-page { gap: 16px; }
+
+  .modules-page .panel { padding: 16px; }
+
+  .modules-page .panel-head { align-items: start; flex-direction: column; }
+
+  .catalog-module { grid-template-columns: 1fr; gap: 10px; }
+
+  .catalog-module .module-status { justify-self: start; }
+
+  .catalog-module .module-actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .catalog-module .module-actions .primary-link:only-child { grid-column: 1 / -1; }
+
+  .registered-module-main { grid-template-columns: auto minmax(0, 1fr); gap: 10px; }
+
+  .registered-module-main .module-status { justify-self: start; }
+
+  .registered-module-main .secondary-link { justify-self: stretch; text-align: center; }
+
+  .module-edit-form { grid-template-columns: 1fr; }
+
+  .module-edit-form .module-actions { display: grid; grid-template-columns: 1fr; }
 }
 
 /* ─── Statistik-Seite: Balkendiagramme ─────────────────────────────────── */
