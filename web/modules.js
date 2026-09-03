@@ -70,7 +70,7 @@ function renderCatalog(modules) {
       <div class="module-actions">
         <a class="secondary-link" href="${escapeHTML(module.repository_url)}" target="_blank" rel="noreferrer">Repository</a>
         ${module.installed
-          ? `<button class="update-module" type="button">${module.update_available ? "Update installieren" : "Aktualisieren"}</button><a class="primary-link" href="${escapeHTML(module.local_url)}" target="_blank" rel="noreferrer">Öffnen</a>`
+          ? `${module.update_available ? '<button class="update-module" type="button">Update installieren</button>' : ""}<a class="primary-link" href="${escapeHTML(module.local_url)}" target="_blank" rel="noreferrer">Öffnen</a>`
           : '<button class="install-module" type="button">Herunterladen &amp; einrichten</button>'}
       </div>`;
     const installButton = card.querySelector(".install-module");
@@ -136,7 +136,7 @@ function renderModules(modules) {
         <label>Name<input name="name" value="${escapeHTML(module.name)}" maxlength="100" required /></label>
         <label>Lokaler Ordner<span class="path-picker"><input name="path" value="${escapeHTML(module.path)}" required /><button class="ghost choose-path" type="button">Ordner wählen</button></span></label>
         <div class="module-actions">
-          ${module.managed ? '<button class="update-module" type="button">Aktualisieren</button>' : ""}
+          ${module.managed && !module.installed_version ? '<button class="update-module" type="button">Aktualisieren</button>' : ""}
           <button type="submit">Änderungen speichern</button>
           <button class="danger delete-module" type="button">Vollständig löschen</button>
         </div>
