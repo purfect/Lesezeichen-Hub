@@ -329,6 +329,9 @@ body {
 .modules-page .panel { padding: clamp(18px, 2.4vw, 28px); }
 .section-kicker { margin: 0 0 4px; color: var(--accent); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
 .module-catalog-list, .module-registry-list { display: grid; gap: 8px; margin-top: 20px; }
+.catalog-unavailable { padding: 16px; border: 1px dashed var(--line); background: rgba(10, 19, 30, 0.34); color: var(--muted); }
+.catalog-unavailable strong { color: var(--ink); }
+.catalog-unavailable p { margin: 6px 0 0; font-size: 0.85rem; }
 .catalog-module, .registered-module { border: 1px solid var(--line); background: rgba(10, 19, 30, 0.5); }
 .catalog-module { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 16px; min-height: 82px; padding: 13px 15px; }
 .catalog-module.is-installed { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }

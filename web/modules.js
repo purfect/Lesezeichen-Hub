@@ -11,21 +11,39 @@ els.check.addEventListener("click", () => loadModules(true));
 loadModules();
 
 async function loadModules(showResult = false) {
+  els.check.disabled = true;
+  setStatus("Lokale Module werden geladen...");
   try {
-    els.check.disabled = true;
-    setStatus("Module werden geprüft...");
-    const [catalogPayload, localPayload] = await Promise.all([
-      request("/api/module-catalog"),
-      request("/api/modules"),
-    ]);
-    renderCatalog(catalogPayload.modules || []);
+    const localPayload = await request("/api/modules");
     renderModules(localPayload.modules || []);
+    setStatus("Lokale Module bereit. Online-Katalog wird geladen...");
+  } catch (error) {
+    setStatus(error.message || "Lokale Module konnten nicht geladen werden.", true);
+  } finally {
+    loadCatalog(showResult);
+  }
+}
+
+async function loadCatalog(showResult) {
+  try {
+    const catalogPayload = await request("/api/module-catalog");
+    renderCatalog(catalogPayload.modules || []);
     setStatus(showResult ? "Modulliste aktualisiert." : "Bereit.");
   } catch (error) {
-    setStatus(error.message || "Module konnten nicht geladen werden.", true);
+    renderCatalogUnavailable(error);
+    setStatus("Lokale Module sind verfügbar. Der Online-Katalog konnte nicht geladen werden.", true);
   } finally {
     els.check.disabled = false;
   }
+}
+
+function renderCatalogUnavailable(error) {
+  els.catalogList.innerHTML = "";
+  els.catalogSummary.textContent = "Online-Katalog derzeit nicht erreichbar.";
+  const notice = document.createElement("div");
+  notice.className = "catalog-unavailable";
+  notice.innerHTML = `<strong>Online-Katalog nicht verfügbar</strong><p>${escapeHTML(error?.message || "Bitte Netzwerkverbindung und GitHub-Zugriff prüfen.")}</p>`;
+  els.catalogList.appendChild(notice);
 }
 
 function renderCatalog(modules) {
@@ -107,7 +125,7 @@ function renderModules(modules) {
     card.innerHTML = `
       <div class="registered-module-main">
         <span class="module-mark" aria-hidden="true">▦</span>
-        <div class="registered-module-title"><strong>${escapeHTML(module.name)}</strong><span>${module.managed ? "Aus dem Hub-Katalog" : "Lokaler Ordner"}</span></div>
+        <div class="registered-module-title"><strong>${escapeHTML(module.name)}</strong><span>${module.managed ? "Aus dem Hub-Katalog" : "Lokaler Ordner"}${module.installed_version ? ` · Version ${escapeHTML(module.installed_version)}` : ""}</span></div>
         <span class="module-status ${module.available ? "is-available" : "is-missing"}">${module.available ? "Verfügbar" : "Nicht erreichbar"}</span>
         <a class="secondary-link ${module.available ? "" : "is-disabled"}" href="${escapeHTML(module.url)}" target="_blank" rel="noreferrer" ${module.available ? "" : 'aria-disabled="true"'}>Öffnen</a>
       </div>
