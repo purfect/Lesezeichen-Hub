@@ -1,7 +1,7 @@
 {
-  "latest_version": "3.6.6",
-  "asset_url": "https://github.com/purfect/Lesezeichen-Hub/releases/download/3.6.6/Lesezeichen-Hub_3.6.6.exe",
-  "release_url": "https://github.com/purfect/Lesezeichen-Hub/releases/tag/3.6.6",
-  "asset_name": "Lesezeichen-Hub_3.6.6.exe",
-  "checksum_url": "https://github.com/purfect/Lesezeichen-Hub/releases/download/3.6.6/Lesezeichen-Hub_3.6.6.exe.sha256"
+  "checksum_url": "https://github.com/purfect/Lesezeichen-Hub/releases/download/3.7/Lesezeichen-Hub_3.7.exe.sha256",
+  "release_url": "https://github.com/purfect/Lesezeichen-Hub/releases/tag/3.7",
+  "latest_version": "3.7",
+  "asset_name": "Lesezeichen-Hub_3.7.exe",
+  "asset_url": "https://github.com/purfect/Lesezeichen-Hub/releases/download/3.7/Lesezeichen-Hub_3.7.exe"
 }
