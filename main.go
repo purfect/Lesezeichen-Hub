@@ -351,6 +351,7 @@ func main() {
 	mux.HandleFunc("/api/module-catalog/", app.handleModuleCatalogRoutes)
 	mux.HandleFunc("/api/module-folder", app.handleModuleFolder)
 	mux.HandleFunc("/api/sops/project", app.handleSOPSProject)
+	mux.HandleFunc("/api/sops/config", app.handleSOPSConfig)
 	mux.HandleFunc("/api/sops/files", app.handleSOPSFiles)
 	mux.HandleFunc("/api/sops/decrypt", app.handleSOPSDecrypt)
 	mux.HandleFunc("/api/sops/save", app.handleSOPSSave)
@@ -1444,6 +1445,12 @@ type sopsFileRequest struct {
 	Content string `json:"content"`
 }
 
+type sopsConfigRequest struct {
+	KMSKeys []string `json:"kmsKeys"`
+	AgeKeys []string `json:"ageKeys"`
+	PGPKeys []string `json:"pgpKeys"`
+}
+
 func (app *application) handleSOPSProject(w http.ResponseWriter, r *http.Request) {
 	sopsNoStore(w)
 	switch r.Method {
@@ -1471,6 +1478,40 @@ func (app *application) handleSOPSProject(w http.ResponseWriter, r *http.Request
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+func (app *application) handleSOPSConfig(w http.ResponseWriter, r *http.Request) {
+	sopsNoStore(w)
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var request sopsConfigRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&request); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungültige SOPS-Konfiguration"))
+		return
+	}
+	kmsKeys, ageKeys, pgpKeys := cleanedSOPSValues(request.KMSKeys), cleanedSOPSValues(request.AgeKeys), cleanedSOPSValues(request.PGPKeys)
+	if len(kmsKeys)+len(ageKeys)+len(pgpKeys) == 0 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("mindestens einen KMS-, age- oder PGP-Empfänger angeben"))
+		return
+	}
+	root, err := app.resolveSOPSProject()
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	filename := filepath.Join(root, ".sops.yaml")
+	if _, err := os.Stat(filename); err == nil {
+		writeErr(w, http.StatusConflict, fmt.Errorf("eine .sops.yaml ist bereits vorhanden und wird nicht überschrieben"))
+		return
+	}
+	content := sopsConfigYAML(kmsKeys, ageKeys, pgpKeys)
+	if err := os.WriteFile(filename, []byte(content), 0600); err != nil {
+		writeErr(w, http.StatusInternalServerError, fmt.Errorf(".sops.yaml konnte nicht angelegt werden: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"path": ".sops.yaml"})
 }
 
 func (app *application) handleSOPSFiles(w http.ResponseWriter, r *http.Request) {
@@ -1656,6 +1697,33 @@ func sopsFileFormat(filename string) bool {
 		return false
 	}
 	return strings.HasSuffix(filename, ".yaml") || strings.HasSuffix(filename, ".yml") || strings.HasSuffix(filename, ".json") || strings.HasSuffix(filename, ".env") || strings.HasSuffix(filename, ".ini")
+}
+
+func cleanedSOPSValues(values []string) []string {
+	seen := map[string]bool{}
+	result := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" && !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func sopsConfigYAML(kmsKeys, ageKeys, pgpKeys []string) string {
+	lines := []string{"creation_rules:", "  - path_regex: '.*\\.(yaml|yml|json|env|ini)$'"}
+	if len(kmsKeys) > 0 {
+		lines = append(lines, "    kms: "+strings.Join(kmsKeys, ","))
+	}
+	if len(ageKeys) > 0 {
+		lines = append(lines, "    age: "+strings.Join(ageKeys, ","))
+	}
+	if len(pgpKeys) > 0 {
+		lines = append(lines, "    pgp: "+strings.Join(pgpKeys, ","))
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 var kmsARNPattern = regexp.MustCompile(`arn:aws:kms:[^\s"']+`)

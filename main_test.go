@@ -112,6 +112,31 @@ func TestSOPSProjectSelectionIsStored(t *testing.T) {
 	}
 }
 
+func TestSOPSConfigCreatesCreationRuleWithoutOverwriting(t *testing.T) {
+	root := testTempDir(t)
+	app := &application{sopsProjectDir: root}
+	body := bytes.NewBufferString(`{"kmsKeys":["arn:aws:kms:eu-central-1:123456789012:key/example"],"ageKeys":["age1example"],"pgpKeys":["ABCDEF"]}`)
+	response := httptest.NewRecorder()
+	app.handleSOPSConfig(response, httptest.NewRequest(http.MethodPost, "/api/sops/config", body))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	content, err := os.ReadFile(filepath.Join(root, ".sops.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"creation_rules:", "path_regex:", "kms: arn:aws:kms:eu-central-1:123456789012:key/example", "age: age1example", "pgp: ABCDEF"} {
+		if !strings.Contains(string(content), value) {
+			t.Errorf(".sops.yaml missing %q: %s", value, content)
+		}
+	}
+	response = httptest.NewRecorder()
+	app.handleSOPSConfig(response, httptest.NewRequest(http.MethodPost, "/api/sops/config", bytes.NewBufferString(`{"ageKeys":["age1other"]}`)))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("second create status = %d, want %d", response.Code, http.StatusConflict)
+	}
+}
+
 func TestResolveSOPSFileStaysInProject(t *testing.T) {
 	root := testTempDir(t)
 	if err := os.MkdirAll(filepath.Join(root, "secrets"), 0755); err != nil {
