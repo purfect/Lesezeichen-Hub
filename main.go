@@ -1516,7 +1516,7 @@ func (app *application) handleSOPSDecrypt(w http.ResponseWriter, r *http.Request
 		methodNotAllowed(w)
 		return
 	}
-	request, filename, err := app.sopsRequestFile(w, r)
+	request, filename, err := app.sopsRequestFile(w, r, true)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
@@ -1545,7 +1545,7 @@ func (app *application) handleSOPSSave(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	request, filename, err := app.sopsRequestFile(w, r)
+	request, filename, err := app.sopsRequestFile(w, r, false)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
@@ -1582,7 +1582,7 @@ func (app *application) handleSOPSSave(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": request.Path})
 }
 
-func (app *application) sopsRequestFile(w http.ResponseWriter, r *http.Request) (sopsFileRequest, string, error) {
+func (app *application) sopsRequestFile(w http.ResponseWriter, r *http.Request, mustExist bool) (sopsFileRequest, string, error) {
 	var request sopsFileRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 5<<20+1024)).Decode(&request); err != nil {
 		return request, "", fmt.Errorf("ungültige SOPS-Anfrage")
@@ -1594,7 +1594,7 @@ func (app *application) sopsRequestFile(w http.ResponseWriter, r *http.Request) 
 	if !sopsFileFormat(request.Path) {
 		return request, "", fmt.Errorf("nur YAML-, JSON-, dotenv- und INI-Dateien sind erlaubt")
 	}
-	filename, err := resolveSOPSFile(root, request.Path)
+	filename, err := resolveSOPSFile(root, request.Path, mustExist)
 	if err != nil {
 		return request, "", err
 	}
@@ -1620,13 +1620,23 @@ func resolveSOPSProjectPath(projectPath string) (string, error) {
 	return filepath.EvalSymlinks(root)
 }
 
-func resolveSOPSFile(root, relative string) (string, error) {
+func resolveSOPSFile(root, relative string, mustExist bool) (string, error) {
 	relative = path.Clean(strings.TrimSpace(relative))
 	if relative == "." || relative == ".." || strings.HasPrefix(relative, "../") || path.IsAbs(relative) {
 		return "", fmt.Errorf("SOPS-Dateipfad ist ungültig")
 	}
 	filename := filepath.Join(root, filepath.FromSlash(relative))
 	info, err := os.Stat(filename)
+	if os.IsNotExist(err) && !mustExist {
+		parent, parentErr := filepath.EvalSymlinks(filepath.Dir(filename))
+		if parentErr != nil {
+			return "", fmt.Errorf("SOPS-Zielordner wurde nicht gefunden")
+		}
+		if rel, relErr := filepath.Rel(root, parent); relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return "", fmt.Errorf("SOPS-Zielordner liegt außerhalb des Projektordners")
+		}
+		return filename, nil
+	}
 	if err != nil || info.IsDir() {
 		return "", fmt.Errorf("SOPS-Datei wurde nicht gefunden")
 	}

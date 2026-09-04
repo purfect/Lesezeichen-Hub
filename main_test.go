@@ -121,14 +121,18 @@ func TestResolveSOPSFileStaysInProject(t *testing.T) {
 	if err := os.WriteFile(filename, []byte("sops: {}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := resolveSOPSFile(root, "secrets/production.yaml")
+	resolved, err := resolveSOPSFile(root, "secrets/production.yaml", true)
 	if err != nil || resolved != filename {
 		t.Fatalf("resolveSOPSFile = %q, %v; want %q, nil", resolved, err, filename)
 	}
 	for _, value := range []string{"../outside.yaml", "/outside.yaml", "."} {
-		if _, err := resolveSOPSFile(root, value); err == nil {
+		if _, err := resolveSOPSFile(root, value, true); err == nil {
 			t.Errorf("resolveSOPSFile(%q) succeeded, want error", value)
 		}
+	}
+	newFile, err := resolveSOPSFile(root, "secrets/new.yaml", false)
+	if err != nil || newFile != filepath.Join(root, "secrets", "new.yaml") {
+		t.Fatalf("resolve new SOPS file = %q, %v", newFile, err)
 	}
 }
 
