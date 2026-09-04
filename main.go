@@ -3374,7 +3374,7 @@ func githubArchiveURLFromRepoURL(u *url.URL) (string, string, bool) {
 	if owner == "" || repo == "" {
 		return "", "", false
 	}
-	branch := "main"
+	branch := ""
 	if len(parts) >= 4 && parts[2] == "tree" {
 		branchParts := make([]string, 0, len(parts)-3)
 		for _, part := range parts[3:] {
@@ -3389,7 +3389,12 @@ func githubArchiveURLFromRepoURL(u *url.URL) (string, string, bool) {
 		return "", "", false
 	}
 	baseRepoURL := "https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo)
-	return baseRepoURL + "/archive/refs/heads/" + url.PathEscape(branch) + ".zip", baseRepoURL, true
+	// zipball ohne ref liefert den tatsaechlichen default-branch (main, master, ...)
+	apiURL := "https://api.github.com/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/zipball"
+	if branch != "" {
+		apiURL += "/" + url.PathEscape(branch)
+	}
+	return apiURL, baseRepoURL, true
 }
 
 func safeModuleDirectoryName(name string) string {

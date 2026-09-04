@@ -84,13 +84,13 @@ func TestNormalizeRemoteModuleSourceURL(t *testing.T) {
 		},
 		{
 			value:        "https://github.com/acme/tools",
-			wantDownload: "https://github.com/acme/tools/archive/refs/heads/main.zip",
+			wantDownload: "https://api.github.com/repos/acme/tools/zipball",
 			wantSource:   "https://github.com/acme/tools",
 			valid:        true,
 		},
 		{
 			value:        "https://github.com/acme/tools/tree/develop",
-			wantDownload: "https://github.com/acme/tools/archive/refs/heads/develop.zip",
+			wantDownload: "https://api.github.com/repos/acme/tools/zipball/develop",
 			wantSource:   "https://github.com/acme/tools",
 			valid:        true,
 		},
