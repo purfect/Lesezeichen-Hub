@@ -66,6 +66,14 @@ Die Dateien werden über den Hub unter `/modules/...` ausgeliefert, sodass relat
 
 Der Server muss lokal unter Windows laufen und Zugriff auf den angegebenen Ordner haben. Änderungen an den Moduldateien werden beim nächsten Aufruf direkt verwendet.
 
+### SOPS Editor
+
+Das Modul `sops_webapp` verwendet die Hub-Endpunkte `GET /api/sops/files`, `POST /api/sops/decrypt` und `POST /api/sops/save`. Der Hub ruft hierfür die lokal installierte offizielle `sops`-CLI auf; er benötigt keine zusätzliche Go-Kryptobibliothek.
+
+Nach dem Start der Hub-EXE im SOPS-Editor einmal **Ordner** wählen. Der Windows-Ordnerdialog legt den freigegebenen SOPS-Projektordner fest; der Hub speichert diese Auswahl in seiner lokalen Datenbank und verwendet sie beim nächsten EXE-Start automatisch. `SOPS_PROJECT_PATH` kann für automatisierte Setups optional als Startwert gesetzt werden, ist für die normale Nutzung aber nicht erforderlich.
+
+Die Endpunkte listen und bearbeiten ausschließlich YAML-, JSON-, dotenv- und INI-Dateien innerhalb dieses Ordners. Pfade außerhalb des Ordners sowie `.git` und `node_modules` werden abgewiesen beziehungsweise nicht gelistet. Für **Speichern & verschlüsseln** muss im Projekt die passende `.sops.yaml` vorhanden sein, damit die direkt in die Hub-EXE gelinkte SOPS-Implementierung die gewünschten Empfänger und Verschlüsselungsregeln bestimmt. AWS-SSO, IAM-Rollen und KMS werden über die lokale AWS-Konfiguration verwendet; das Frontend erhält keine Zugangsdaten.
+
 ## Windows Start und Stop per Klick
 
 Nach dem Build kannst du den Hub ohne Terminal starten:

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -66,6 +67,106 @@ func TestValidateURL(t *testing.T) {
 		if (err == nil) != test.valid {
 			t.Errorf("validateURL(%q) error = %v, valid = %t", test.value, err, test.valid)
 		}
+	}
+}
+
+func TestSOPSFileFormat(t *testing.T) {
+	for _, filename := range []string{"secrets.yaml", "secrets.yml", "secrets.json", "secrets.env", "secrets.ini"} {
+		if !sopsFileFormat(filename) {
+			t.Errorf("sopsFileFormat(%q) = false, want true", filename)
+		}
+	}
+	for _, filename := range []string{"README.md", "secret.txt", "script.js", ".sops.yaml"} {
+		if sopsFileFormat(filename) {
+			t.Errorf("sopsFileFormat(%q) = true, want false", filename)
+		}
+	}
+}
+
+func TestSOPSProjectSelectionIsStored(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	root := testTempDir(t)
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	app := &application{db: db}
+	body := bytes.NewBufferString(`{"path":"` + strings.ReplaceAll(root, `\`, `\\`) + `"}`)
+	response := httptest.NewRecorder()
+	app.handleSOPSProject(response, httptest.NewRequest(http.MethodPut, "/api/sops/project", body))
+	if response.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if app.sopsProjectDir == "" || readAppSetting(db, "sops_project_dir") != app.sopsProjectDir {
+		t.Fatal("SOPS-Projektordner wurde nicht gespeichert")
+	}
+	response = httptest.NewRecorder()
+	app.handleSOPSProject(response, httptest.NewRequest(http.MethodGet, "/api/sops/project", nil))
+	var responsePayload struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&responsePayload); err != nil || responsePayload.Path != app.sopsProjectDir {
+		t.Fatalf("GET path = %q, error = %v, want %q", responsePayload.Path, err, app.sopsProjectDir)
+	}
+}
+
+func TestResolveSOPSFileStaysInProject(t *testing.T) {
+	root := testTempDir(t)
+	if err := os.MkdirAll(filepath.Join(root, "secrets"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	filename := filepath.Join(root, "secrets", "production.yaml")
+	if err := os.WriteFile(filename, []byte("sops: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveSOPSFile(root, "secrets/production.yaml")
+	if err != nil || resolved != filename {
+		t.Fatalf("resolveSOPSFile = %q, %v; want %q, nil", resolved, err, filename)
+	}
+	for _, value := range []string{"../outside.yaml", "/outside.yaml", "."} {
+		if _, err := resolveSOPSFile(root, value); err == nil {
+			t.Errorf("resolveSOPSFile(%q) succeeded, want error", value)
+		}
+	}
+}
+
+func TestSOPSFilesListsOnlySupportedProjectFiles(t *testing.T) {
+	root := testTempDir(t)
+	for filename, content := range map[string]string{"secrets.yaml": "a: 1", "config.json": "{}", ".sops.yaml": "creation_rules: []", "notes.txt": "ignore", ".git/config": "ignore"} {
+		fullPath := filepath.Join(root, filepath.FromSlash(filename))
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := &application{sopsProjectDir: root}
+	response := httptest.NewRecorder()
+	app.handleSOPSFiles(response, httptest.NewRequest(http.MethodGet, "/api/sops/files", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if cacheControl := response.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Errorf("Cache-Control = %q, want no-store", cacheControl)
+	}
+	var payload struct {
+		Files []string `json:"files"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(payload.Files, []string{"config.json", "secrets.yaml"}) {
+		t.Fatalf("files = %#v", payload.Files)
+	}
+}
+
+func TestFirstKMSARN(t *testing.T) {
+	content := "sops:\n  kms:\n    - arn: arn:aws:kms:eu-central-1:123456789012:key/example\n"
+	if got := firstKMSARN(content); got != "arn:aws:kms:eu-central-1:123456789012:key/example" {
+		t.Fatalf("firstKMSARN = %q", got)
 	}
 }
 
