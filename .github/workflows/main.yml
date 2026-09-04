@@ -52,6 +52,8 @@ jobs:
           $releaseUrl = "https://github.com/$repository/releases/tag/$tag"
           $assetUrl = "https://github.com/$repository/releases/download/$tag/$asset"
           $checksumUrl = "$assetUrl.sha256"
+          git fetch origin main
+          git checkout -B main origin/main
           @{
             latest_version = $tag
             asset_name = $asset
@@ -59,8 +61,6 @@ jobs:
             checksum_url = $checksumUrl
             release_url = $releaseUrl
           } | ConvertTo-Json | Set-Content -Path version.json -Encoding utf8
-          git fetch origin main
-          git checkout -B main origin/main
           git add version.json
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Publish update manifest for $tag"
           git push origin HEAD:main
