@@ -18,10 +18,11 @@ Die Anwendung laeuft komplett lokal, bietet Gruppen, Tags, Favoriten, Wiedervorl
 - Lesezeichen mit Titel, URL, Notiz, Tags und Datum
 - Favoriten und angepinnte Eintraege
 - Suche ueber Titel, URL, Notizen, Tags und Gruppen
+- Öffnungs- und Nutzungsstatistik fuer Lesezeichen
 - Schnellfilter fuer Gruppen, Tags, Favoriten, Pins und faellige Wiedervorlagen
 - Gespeicherte Ansichten fuer wiederkehrende Suchen und Filter
 - Drag and Drop Sortierung fuer Gruppen und Lesezeichen
-- Import und Export als JSON, CSV und HTML
+- Import und Export als JSON, CSV und HTML (inklusive Firefox-, Edge- und Chrome-Lesezeichenexport)
 - Lokale SQLite-Datenbank
 - Lokale Webanwendungen als Lesezeichen in bestehende Gruppen integrieren
 
@@ -107,6 +108,8 @@ Hinweise:
 - Das Script fragt erst Gruppe, Titel, Notiz und Tags ab und sendet dann an /api/bookmarks.
 - Der Speicherdialog merkt die zuletzt verwendete Gruppe und bietet bereits verwendete Tags als Vorschläge an.
 - Wenn noch keine Gruppen existieren, zuerst im Hub eine Gruppe anlegen.
+
+Browser-Lesezeichen lassen sich über den HTML-Export von Firefox, Edge oder Chrome importieren. Die Ordnerstruktur wird in Gruppen übernommen; vorhandene Lesezeichen mit derselben Gruppe und URL werden wie bei anderen Importen als Konflikt behandelt.
 
 ## EXE bauen
 

@@ -4,6 +4,7 @@ const els = {
   topTags: document.getElementById("top-tags"),
   reminderSummary: document.getElementById("reminder-summary"),
   archiveSummary: document.getElementById("archive-summary"),
+  usageSummary: document.getElementById("usage-summary"),
   status: document.getElementById("status"),
 };
 
@@ -27,6 +28,8 @@ function renderOverview(groups) {
   const pinned = bookmarks.filter((bookmark) => Boolean(bookmark.pinned)).length;
   const withNotes = bookmarks.filter((bookmark) => String(bookmark.notes || "").trim().length > 0).length;
   const archived = bookmarks.filter((bookmark) => Boolean(bookmark.archived)).length;
+  const totalOpens = bookmarks.reduce((sum, bookmark) => sum + Number(bookmark.open_count || 0), 0);
+  const openedBookmarks = bookmarks.filter((bookmark) => Number(bookmark.open_count || 0) > 0).length;
   const active = bookmarks.length - archived;
   const archiveRatio = bookmarks.length > 0 ? Math.round((archived / bookmarks.length) * 100) : 0;
 
@@ -51,6 +54,8 @@ function renderOverview(groups) {
     { label: "Mit Datum", value: reminders.length },
     { label: "Bald/fällig", value: dueSoon },
     { label: "Tags gesamt", value: uniqueTagCount },
+    { label: "Öffnungen", value: totalOpens },
+    { label: "Genutzte Links", value: openedBookmarks },
   ];
 
   els.statsGrid.innerHTML = "";
@@ -73,6 +78,33 @@ function renderOverview(groups) {
   renderTopTags(allTags);
   renderRemindersSummary(reminders.length, dueSoon, overdue);
   renderArchiveSummary(groups, archived, active, archiveRatio);
+  renderUsageSummary(bookmarks, totalOpens);
+}
+
+function renderUsageSummary(bookmarks, totalOpens) {
+  els.usageSummary.innerHTML = "";
+  const mostOpened = [...bookmarks]
+    .filter((bookmark) => Number(bookmark.open_count || 0) > 0)
+    .sort((a, b) => Number(b.open_count || 0) - Number(a.open_count || 0))
+    .slice(0, 5);
+  const entries = [
+    `Öffnungen gesamt: ${totalOpens}`,
+    `Genutzte Lesezeichen: ${bookmarks.filter((bookmark) => Number(bookmark.open_count || 0) > 0).length}`,
+  ];
+  if (mostOpened.length > 0) {
+    entries.push("Top 5 meist geöffnet:");
+  }
+  mostOpened.forEach((bookmark, index) => {
+    entries.push(`${index + 1}. ${bookmark.title} (${bookmark.open_count} Öffnungen)`);
+  });
+  if (mostOpened.length === 0) {
+    entries.push("Noch keine Öffnungen erfasst.");
+  }
+  for (const entry of entries) {
+    const li = document.createElement("li");
+    li.textContent = entry;
+    els.usageSummary.appendChild(li);
+  }
 }
 
 function renderLargestGroups(groups) {

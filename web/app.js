@@ -720,10 +720,14 @@ function parseCSVImport(rawCSV) {
 function parseHTMLImport(rawHTML) {
   const doc = new DOMParser().parseFromString(rawHTML, "text/html");
   const groupNodes = Array.from(doc.querySelectorAll(".group"));
-  if (groupNodes.length === 0) {
-    throw new Error("HTML-Format nicht erkannt.");
+  if (groupNodes.length > 0) {
+    return parseHubHTMLGroups(groupNodes);
   }
 
+  return parseNetscapeHTMLImport(doc);
+}
+
+function parseHubHTMLGroups(groupNodes) {
   const groups = groupNodes.map((node, groupIndex) => {
     const name = (node.querySelector("h2")?.textContent || "ungruppiert").trim() || "ungruppiert";
     const description = (node.querySelector(".desc")?.textContent || "").trim();
@@ -758,6 +762,43 @@ function parseHTMLImport(rawHTML) {
     throw new Error("HTML enthaelt keine importierbaren Lesezeichen.");
   }
 
+  return { groups };
+}
+
+function parseNetscapeHTMLImport(doc) {
+  const groups = [];
+  const rootList = doc.querySelector("body > dl, html > dl, dl");
+  if (!rootList) {
+    throw new Error("HTML-Format nicht erkannt.");
+  }
+
+  const addFolder = (list, name) => {
+    const bookmarks = [];
+    const children = [...list.children].filter((child) => child.tagName === "DT");
+    for (const child of children) {
+      const link = [...child.children].find((element) => element.tagName === "A");
+      const nestedList = [...child.children].find((element) => element.tagName === "DL");
+      const heading = [...child.children].find((element) => element.tagName === "H3");
+      if (link) {
+        const title = (link.textContent || "").trim();
+        const url = (link.getAttribute("href") || "").trim();
+        if (title && url) {
+          bookmarks.push({ title, url, notes: "", tags: [], favorite: false, pinned: false, archived: false, sort_order: bookmarks.length, remind_at: "" });
+        }
+      }
+      if (heading && nestedList) {
+        addFolder(nestedList, (heading.textContent || "").trim() || "Unbenannt");
+      }
+    }
+    if (bookmarks.length > 0) {
+      groups.push({ name: name || "Import", description: "", sort_order: groups.length, bookmarks });
+    }
+  };
+
+  addFolder(rootList, "Import");
+  if (groups.length === 0) {
+    throw new Error("HTML enthaelt keine importierbaren Lesezeichen.");
+  }
   return { groups };
 }
 
@@ -987,7 +1028,9 @@ function render() {
       item.dataset.groupId = String(group.id);
       const link = item.querySelector(".bookmark-link");
       link.textContent = bookmark.title;
-      link.href = bookmark.url;
+      link.href = `/api/bookmarks/${bookmark.id}/open`;
+      link.target = "_blank";
+      link.rel = "noopener";
       item.querySelector(".bookmark-url").textContent = bookmark.url;
       item.querySelector(".bookmark-notes").textContent = bookmark.notes || "";
 
@@ -1096,7 +1139,7 @@ function renderFavoritesQuickbar() {
     link.className = "favorite-pill";
     link.draggable = true;
     link.dataset.bookmarkId = String(bookmark.id);
-    link.href = bookmark.url;
+    link.href = `/api/bookmarks/${bookmark.id}/open`;
     link.target = "_blank";
     link.rel = "noreferrer";
     link.title = `${bookmark.title} (${bookmark.groupName})`;

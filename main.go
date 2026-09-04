@@ -96,19 +96,21 @@ type group struct {
 }
 
 type bookmark struct {
-	ID        int64      `json:"id"`
-	GroupID   int64      `json:"group_id"`
-	Title     string     `json:"title"`
-	URL       string     `json:"url"`
-	Notes     string     `json:"notes"`
-	Tags      []string   `json:"tags"`
-	Favorite  bool       `json:"favorite"`
-	Pinned    bool       `json:"pinned"`
-	Archived  bool       `json:"archived"`
-	SortOrder int        `json:"sort_order"`
-	RemindAt  *time.Time `json:"remind_at,omitempty"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	ID         int64      `json:"id"`
+	GroupID    int64      `json:"group_id"`
+	Title      string     `json:"title"`
+	URL        string     `json:"url"`
+	Notes      string     `json:"notes"`
+	Tags       []string   `json:"tags"`
+	Favorite   bool       `json:"favorite"`
+	Pinned     bool       `json:"pinned"`
+	Archived   bool       `json:"archived"`
+	SortOrder  int        `json:"sort_order"`
+	OpenCount  int        `json:"open_count"`
+	LastOpened *time.Time `json:"last_opened_at,omitempty"`
+	RemindAt   *time.Time `json:"remind_at,omitempty"`
+	CreatedAt  *time.Time `json:"created_at,omitempty"`
+	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
 }
 
 type note struct {
@@ -1575,6 +1577,8 @@ func initializeSchema(db *sql.DB) error {
 		`ALTER TABLE bookmarks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE bookmarks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE bookmarks ADD COLUMN remind_at DATETIME NULL`,
+		`ALTER TABLE bookmarks ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE bookmarks ADD COLUMN last_opened_at DATETIME NULL`,
 		`ALTER TABLE modules ADD COLUMN managed INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE modules ADD COLUMN installed_version TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE modules ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`,
@@ -2585,6 +2589,32 @@ func (app *application) handleBookmarks(w http.ResponseWriter, r *http.Request) 
 
 func (app *application) handleBookmarkRoutes(w http.ResponseWriter, r *http.Request) {
 	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/bookmarks/"), "/")
+	if strings.HasSuffix(trimmed, "/open") {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		bookmarkID, err := strconv.ParseInt(strings.TrimSuffix(trimmed, "/open"), 10, 64)
+		if err != nil || bookmarkID <= 0 {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltige bookmark-id"))
+			return
+		}
+		var urlValue string
+		if err := app.db.QueryRowContext(r.Context(), `SELECT url FROM bookmarks WHERE id = ?`, bookmarkID).Scan(&urlValue); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeErr(w, http.StatusNotFound, fmt.Errorf("bookmark nicht gefunden"))
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if _, err := app.db.ExecContext(r.Context(), `UPDATE bookmarks SET open_count = open_count + 1, last_opened_at = CURRENT_TIMESTAMP WHERE id = ?`, bookmarkID); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		http.Redirect(w, r, urlValue, http.StatusFound)
+		return
+	}
 	bookmarkID, err := strconv.ParseInt(trimmed, 10, 64)
 	if err != nil || bookmarkID <= 0 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltige bookmark-id"))
@@ -2730,7 +2760,7 @@ func (app *application) reorderBookmarksInGroup(w http.ResponseWriter, r *http.R
 func (app *application) listBookmarksByGroup(w http.ResponseWriter, r *http.Request, groupID int64) {
 	rows, err := app.db.QueryContext(
 		r.Context(),
-		`SELECT id, group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at, created_at, updated_at
+		`SELECT id, group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at, open_count, last_opened_at, created_at, updated_at
 		 FROM bookmarks WHERE group_id = ? ORDER BY pinned DESC, sort_order ASC, id ASC`,
 		groupID,
 	)
@@ -2747,7 +2777,7 @@ func (app *application) listBookmarksByGroup(w http.ResponseWriter, r *http.Requ
 		var favoriteInt int
 		var pinnedInt int
 		var archivedInt int
-		if err := rows.Scan(&b.ID, &b.GroupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &archivedInt, &b.SortOrder, &b.RemindAt, &b.CreatedAt, &b.UpdatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.GroupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &archivedInt, &b.SortOrder, &b.RemindAt, &b.OpenCount, &b.LastOpened, &b.CreatedAt, &b.UpdatedAt); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -2791,7 +2821,7 @@ func (app *application) fetchState(ctx context.Context) ([]group, error) {
 	for i := range groups {
 		bRows, err := app.db.QueryContext(
 			ctx,
-			`SELECT id, group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at, created_at, updated_at
+			`SELECT id, group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at, open_count, last_opened_at, created_at, updated_at
 			 FROM bookmarks WHERE group_id = ? ORDER BY pinned DESC, sort_order ASC, id ASC`,
 			groups[i].ID,
 		)
@@ -2806,7 +2836,7 @@ func (app *application) fetchState(ctx context.Context) ([]group, error) {
 			var favoriteInt int
 			var pinnedInt int
 			var archivedInt int
-			if err := bRows.Scan(&b.ID, &b.GroupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &archivedInt, &b.SortOrder, &b.RemindAt, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			if err := bRows.Scan(&b.ID, &b.GroupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &archivedInt, &b.SortOrder, &b.RemindAt, &b.OpenCount, &b.LastOpened, &b.CreatedAt, &b.UpdatedAt); err != nil {
 				bRows.Close()
 				return nil, err
 			}

@@ -54,13 +54,18 @@ jobs:
           $checksumUrl = "$assetUrl.sha256"
           git fetch origin main
           git checkout -B main origin/main
-          @{
+          $manifest = @{
             latest_version = $tag
             asset_name = $asset
             asset_url = $assetUrl
             checksum_url = $checksumUrl
             release_url = $releaseUrl
-          } | ConvertTo-Json | Set-Content -Path version.json -Encoding utf8
+          } | ConvertTo-Json
+          $manifest | Set-Content -Path version.json -Encoding utf8
           git add version.json
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Publish update manifest for $tag"
-          git push origin HEAD:main
+          if (git diff --cached --quiet -- version.json) {
+            Write-Host "version.json ist bereits aktuell."
+          } else {
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Publish update manifest for $tag"
+            git push origin HEAD:main
+          }
