@@ -19,4 +19,28 @@
     nav.appendChild(link);
   }
   document.querySelector(".topbar")?.insertAdjacentElement("afterend", nav);
+
+  const topButton = document.createElement("button");
+  topButton.className = "scroll-top-button";
+  topButton.type = "button";
+  topButton.setAttribute("aria-label", "Nach oben");
+  topButton.title = "Nach oben";
+  topButton.textContent = "↑";
+  document.body.appendChild(topButton);
+
+  topButton.addEventListener("click", () => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
+  let ticking = false;
+  const updateTopButton = () => {
+    topButton.classList.toggle("visible", window.scrollY > 360);
+    ticking = false;
+  };
+  window.addEventListener("scroll", () => {
+    if (ticking) return;
+    ticking = true;
+    window.requestAnimationFrame(updateTopButton);
+  }, { passive: true });
+  updateTopButton();
 })();
