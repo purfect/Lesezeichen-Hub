@@ -2,7 +2,6 @@ package main
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -31,12 +30,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/getsops/sops/v3"
-	"github.com/getsops/sops/v3/aes"
-	"github.com/getsops/sops/v3/cmd/sops/common"
-	"github.com/getsops/sops/v3/config"
-	"github.com/getsops/sops/v3/decrypt"
-	"github.com/getsops/sops/v3/version"
 	_ "modernc.org/sqlite"
 )
 
@@ -59,7 +52,6 @@ type application struct {
 	moduleWebBase      string
 	moduleManifestBase string
 	moduleInstallDir   string
-	sopsProjectDir     string
 	externalPrices     bool
 	metalPricesMu      sync.RWMutex
 	metalPrices        metalPricesPayload
@@ -304,17 +296,12 @@ func main() {
 		log.Fatalf("init schema: %v", err)
 	}
 
-	sopsProjectDir := strings.TrimSpace(os.Getenv("SOPS_PROJECT_PATH"))
-	if sopsProjectDir == "" {
-		sopsProjectDir = readAppSetting(db, "sops_project_dir")
-	}
 	app := &application{
 		db:                 db,
 		moduleAPIBase:      githubAPIBase,
 		moduleWebBase:      githubWebBase,
 		moduleManifestBase: githubRawBase,
 		moduleInstallDir:   envOrDefault("MODULES_PATH", "./modules"),
-		sopsProjectDir:     sopsProjectDir,
 		externalPrices:     envBool("ENABLE_EXTERNAL_PRICES", true),
 	}
 	mux := http.NewServeMux()
@@ -350,11 +337,6 @@ func main() {
 	mux.HandleFunc("/api/module-catalog", app.handleModuleCatalog)
 	mux.HandleFunc("/api/module-catalog/", app.handleModuleCatalogRoutes)
 	mux.HandleFunc("/api/module-folder", app.handleModuleFolder)
-	mux.HandleFunc("/api/sops/project", app.handleSOPSProject)
-	mux.HandleFunc("/api/sops/config", app.handleSOPSConfig)
-	mux.HandleFunc("/api/sops/files", app.handleSOPSFiles)
-	mux.HandleFunc("/api/sops/decrypt", app.handleSOPSDecrypt)
-	mux.HandleFunc("/api/sops/save", app.handleSOPSSave)
 	mux.HandleFunc("/modules/", app.handleModuleFiles)
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
 	mux.HandleFunc("/api/silver-prices", app.handleSilverPrices)
@@ -1438,361 +1420,6 @@ func (app *application) handleModuleFolder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"path": strings.TrimSpace(string(output))})
-}
-
-type sopsFileRequest struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
-}
-
-type sopsConfigRequest struct {
-	KMSKeys []string `json:"kmsKeys"`
-	AgeKeys []string `json:"ageKeys"`
-	PGPKeys []string `json:"pgpKeys"`
-}
-
-func (app *application) handleSOPSProject(w http.ResponseWriter, r *http.Request) {
-	sopsNoStore(w)
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]string{"path": app.sopsProjectDir})
-	case http.MethodPut:
-		var payload struct {
-			Path string `json:"path"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungültige SOPS-Projektanfrage"))
-			return
-		}
-		root, err := resolveSOPSProjectPath(payload.Path)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, err)
-			return
-		}
-		if _, err := app.db.ExecContext(r.Context(), `INSERT INTO app_settings(key, value) VALUES('sops_project_dir', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, root); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
-			return
-		}
-		app.sopsProjectDir = root
-		writeJSON(w, http.StatusOK, map[string]string{"path": root})
-	default:
-		methodNotAllowed(w)
-	}
-}
-
-func (app *application) handleSOPSConfig(w http.ResponseWriter, r *http.Request) {
-	sopsNoStore(w)
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w)
-		return
-	}
-	var request sopsConfigRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&request); err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungültige SOPS-Konfiguration"))
-		return
-	}
-	kmsKeys, ageKeys, pgpKeys := cleanedSOPSValues(request.KMSKeys), cleanedSOPSValues(request.AgeKeys), cleanedSOPSValues(request.PGPKeys)
-	if len(kmsKeys)+len(ageKeys)+len(pgpKeys) == 0 {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("mindestens einen KMS-, age- oder PGP-Empfänger angeben"))
-		return
-	}
-	root, err := app.resolveSOPSProject()
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	filename := filepath.Join(root, ".sops.yaml")
-	if _, err := os.Stat(filename); err == nil {
-		writeErr(w, http.StatusConflict, fmt.Errorf("eine .sops.yaml ist bereits vorhanden und wird nicht überschrieben"))
-		return
-	}
-	content := sopsConfigYAML(kmsKeys, ageKeys, pgpKeys)
-	if err := os.WriteFile(filename, []byte(content), 0600); err != nil {
-		writeErr(w, http.StatusInternalServerError, fmt.Errorf(".sops.yaml konnte nicht angelegt werden: %w", err))
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]string{"path": ".sops.yaml"})
-}
-
-func (app *application) handleSOPSFiles(w http.ResponseWriter, r *http.Request) {
-	sopsNoStore(w)
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w)
-		return
-	}
-	root, err := app.resolveSOPSProject()
-	if err != nil {
-		writeErr(w, http.StatusServiceUnavailable, err)
-		return
-	}
-	files := []string{}
-	err = filepath.WalkDir(root, func(filename string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if entry.Name() == ".git" || entry.Name() == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		relative, err := filepath.Rel(root, filename)
-		if err != nil || !sopsFileFormat(relative) {
-			return nil
-		}
-		files = append(files, filepath.ToSlash(relative))
-		return nil
-	})
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, fmt.Errorf("SOPS-Projekt konnte nicht gelesen werden: %w", err))
-		return
-	}
-	sort.Strings(files)
-	writeJSON(w, http.StatusOK, map[string]any{"files": files})
-}
-
-func (app *application) handleSOPSDecrypt(w http.ResponseWriter, r *http.Request) {
-	sopsNoStore(w)
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w)
-		return
-	}
-	request, filename, err := app.sopsRequestFile(w, r, true)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	output, err := decrypt.File(filename, sopsFormatForFile(filename))
-	if err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, err)
-		return
-	}
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	response := map[string]any{"content": string(output), "isEncrypted": bytes.Contains(content, []byte("sops:"))}
-	if arn := firstKMSARN(string(content)); arn != "" {
-		response["kmsArn"] = arn
-	}
-	response["path"] = request.Path
-	writeJSON(w, http.StatusOK, response)
-}
-
-func (app *application) handleSOPSSave(w http.ResponseWriter, r *http.Request) {
-	sopsNoStore(w)
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w)
-		return
-	}
-	request, filename, err := app.sopsRequestFile(w, r, false)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	if len(request.Content) > 5<<20 {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("SOPS-Dateien dürfen höchstens 5 MB groß sein"))
-		return
-	}
-	encrypted, err := encryptSOPSFile(filename, request.Content)
-	if err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, err)
-		return
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(filename), ".sops-save-*")
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	temporaryName := temporary.Name()
-	defer os.Remove(temporaryName)
-	if err := temporary.Chmod(0600); err != nil {
-		temporary.Close()
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	if _, err := temporary.Write(encrypted); err != nil || temporary.Close() != nil {
-		writeErr(w, http.StatusInternalServerError, fmt.Errorf("Verschlüsselte SOPS-Datei konnte nicht temporär gespeichert werden: %w", err))
-		return
-	}
-	if err := os.Rename(temporaryName, filename); err != nil {
-		writeErr(w, http.StatusInternalServerError, fmt.Errorf("Verschlüsselte SOPS-Datei konnte nicht ersetzt werden: %w", err))
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": request.Path})
-}
-
-func (app *application) sopsRequestFile(w http.ResponseWriter, r *http.Request, mustExist bool) (sopsFileRequest, string, error) {
-	var request sopsFileRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 5<<20+1024)).Decode(&request); err != nil {
-		return request, "", fmt.Errorf("ungültige SOPS-Anfrage")
-	}
-	root, err := app.resolveSOPSProject()
-	if err != nil {
-		return request, "", err
-	}
-	if !sopsFileFormat(request.Path) {
-		return request, "", fmt.Errorf("nur YAML-, JSON-, dotenv- und INI-Dateien sind erlaubt")
-	}
-	filename, err := resolveSOPSFile(root, request.Path, mustExist)
-	if err != nil {
-		return request, "", err
-	}
-	return request, filename, nil
-}
-
-func (app *application) resolveSOPSProject() (string, error) {
-	return resolveSOPSProjectPath(app.sopsProjectDir)
-}
-
-func resolveSOPSProjectPath(projectPath string) (string, error) {
-	if strings.TrimSpace(projectPath) == "" {
-		return "", fmt.Errorf("SOPS-Projektordner ist nicht gewählt")
-	}
-	root, err := filepath.Abs(projectPath)
-	if err != nil {
-		return "", fmt.Errorf("SOPS-Projektordner ist ungültig")
-	}
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		return "", fmt.Errorf("SOPS-Projektordner ist kein vorhandener Ordner")
-	}
-	return filepath.EvalSymlinks(root)
-}
-
-func resolveSOPSFile(root, relative string, mustExist bool) (string, error) {
-	relative = path.Clean(strings.TrimSpace(relative))
-	if relative == "." || relative == ".." || strings.HasPrefix(relative, "../") || path.IsAbs(relative) {
-		return "", fmt.Errorf("SOPS-Dateipfad ist ungültig")
-	}
-	filename := filepath.Join(root, filepath.FromSlash(relative))
-	info, err := os.Stat(filename)
-	if os.IsNotExist(err) && !mustExist {
-		parent, parentErr := filepath.EvalSymlinks(filepath.Dir(filename))
-		if parentErr != nil {
-			return "", fmt.Errorf("SOPS-Zielordner wurde nicht gefunden")
-		}
-		if rel, relErr := filepath.Rel(root, parent); relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-			return "", fmt.Errorf("SOPS-Zielordner liegt außerhalb des Projektordners")
-		}
-		return filename, nil
-	}
-	if err != nil || info.IsDir() {
-		return "", fmt.Errorf("SOPS-Datei wurde nicht gefunden")
-	}
-	canonical, err := filepath.EvalSymlinks(filename)
-	if err != nil {
-		return "", fmt.Errorf("SOPS-Datei konnte nicht aufgelöst werden")
-	}
-	if rel, err := filepath.Rel(root, canonical); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("SOPS-Datei liegt außerhalb des Projektordners")
-	}
-	return canonical, nil
-}
-
-func sopsFileFormat(filename string) bool {
-	filename = strings.ToLower(filepath.ToSlash(strings.TrimSpace(filename)))
-	if filepath.Base(filename) == ".sops.yaml" {
-		return false
-	}
-	return strings.HasSuffix(filename, ".yaml") || strings.HasSuffix(filename, ".yml") || strings.HasSuffix(filename, ".json") || strings.HasSuffix(filename, ".env") || strings.HasSuffix(filename, ".ini")
-}
-
-func cleanedSOPSValues(values []string) []string {
-	seen := map[string]bool{}
-	result := []string{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" && !seen[value] {
-			seen[value] = true
-			result = append(result, value)
-		}
-	}
-	return result
-}
-
-func sopsConfigYAML(kmsKeys, ageKeys, pgpKeys []string) string {
-	lines := []string{"creation_rules:", "  - path_regex: '.*\\.(yaml|yml|json|env|ini)$'"}
-	if len(kmsKeys) > 0 {
-		lines = append(lines, "    kms: "+strings.Join(kmsKeys, ","))
-	}
-	if len(ageKeys) > 0 {
-		lines = append(lines, "    age: "+strings.Join(ageKeys, ","))
-	}
-	if len(pgpKeys) > 0 {
-		lines = append(lines, "    pgp: "+strings.Join(pgpKeys, ","))
-	}
-	return strings.Join(lines, "\n") + "\n"
-}
-
-var kmsARNPattern = regexp.MustCompile(`arn:aws:kms:[^\s"']+`)
-
-func firstKMSARN(content string) string {
-	return kmsARNPattern.FindString(content)
-}
-
-func encryptSOPSFile(filename, content string) ([]byte, error) {
-	configPath, err := config.FindConfigFile(filepath.Dir(filename))
-	if err != nil {
-		return nil, fmt.Errorf("keine .sops.yaml für diese Datei gefunden: %w", err)
-	}
-	creationRule, err := config.LoadCreationRuleForFile(configPath, filename, nil)
-	if err != nil {
-		return nil, err
-	}
-	stores, err := config.LoadStoresConfig(configPath)
-	if err != nil {
-		return nil, err
-	}
-	store := common.DefaultStoreForPath(stores, filename)
-	if store == nil {
-		return nil, fmt.Errorf("kein SOPS-Store für die Dateiendung verfügbar")
-	}
-	branches, err := store.LoadPlainFile([]byte(content))
-	if err != nil {
-		return nil, err
-	}
-	tree := sops.Tree{FilePath: filename, Branches: branches, Metadata: sops.Metadata{
-		KeyGroups:               creationRule.KeyGroups,
-		ShamirThreshold:         creationRule.ShamirThreshold,
-		UnencryptedSuffix:       creationRule.UnencryptedSuffix,
-		EncryptedSuffix:         creationRule.EncryptedSuffix,
-		UnencryptedRegex:        creationRule.UnencryptedRegex,
-		EncryptedRegex:          creationRule.EncryptedRegex,
-		UnencryptedCommentRegex: creationRule.UnencryptedCommentRegex,
-		EncryptedCommentRegex:   creationRule.EncryptedCommentRegex,
-		MACOnlyEncrypted:        creationRule.MACOnlyEncrypted,
-		Version:                 version.Version,
-	}}
-	dataKey, keyErrors := tree.GenerateDataKey()
-	if len(keyErrors) > 0 {
-		return nil, fmt.Errorf("SOPS-Datenkey konnte nicht für alle Empfänger verschlüsselt werden: %v", keyErrors)
-	}
-	if err := common.EncryptTree(common.EncryptTreeOpts{Tree: &tree, Cipher: aes.NewCipher(), DataKey: dataKey}); err != nil {
-		return nil, err
-	}
-	return store.EmitEncryptedFile(tree)
-}
-
-func sopsFormatForFile(filename string) string {
-	switch strings.ToLower(filepath.Ext(filename)) {
-	case ".yml", ".yaml":
-		return "yaml"
-	case ".json":
-		return "json"
-	case ".env":
-		return "dotenv"
-	case ".ini":
-		return "ini"
-	default:
-		return "yaml"
-	}
-}
-
-func sopsNoStore(w http.ResponseWriter) {
-	w.Header().Set("Cache-Control", "no-store, max-age=0")
-	w.Header().Set("Pragma", "no-cache")
 }
 
 func (app *application) handleModuleFiles(w http.ResponseWriter, r *http.Request) {
