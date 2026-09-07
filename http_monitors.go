@@ -11,10 +11,15 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-const maxHTTPMonitorInterval = 24 * 60 * 60
+const (
+	maxHTTPMonitorInterval       = 24 * 60 * 60
+	maxHTTPMonitorHistoryEntries = 200
+	maxConcurrentHTTPChecks      = 4
+)
 
 type httpMonitorTarget struct {
 	ID              int64      `json:"id"`
@@ -57,6 +62,10 @@ func (app *application) handleHTTPMonitors(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			targets = append(targets, target)
+		}
+		if err := rows.Err(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
 		}
 		writeJSON(w, http.StatusOK, targets)
 	case http.MethodPost:
@@ -143,7 +152,7 @@ func (app *application) handleHTTPMonitorResults(w http.ResponseWriter, r *http.
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("target_id ist erforderlich"))
 		return
 	}
-	rows, err := app.db.QueryContext(r.Context(), `SELECT r.id, r.target_id, r.checked_at, r.ok, r.latency_ms, r.message FROM http_monitor_results r JOIN http_monitor_targets t ON t.id = r.target_id WHERE r.target_id = ? AND t.module_id = ? ORDER BY r.checked_at ASC LIMIT 200`, targetID, moduleID)
+	rows, err := app.db.QueryContext(r.Context(), `SELECT r.id, r.target_id, r.checked_at, r.ok, r.latency_ms, r.message FROM http_monitor_results r JOIN http_monitor_targets t ON t.id = r.target_id WHERE r.target_id = ? AND t.module_id = ? ORDER BY r.checked_at DESC, r.id DESC LIMIT ?`, targetID, moduleID, maxHTTPMonitorHistoryEntries)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -157,6 +166,13 @@ func (app *application) handleHTTPMonitorResults(w http.ResponseWriter, r *http.
 			return
 		}
 		results = append(results, result)
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	for left, right := 0, len(results)-1; left < right; left, right = left+1, right-1 {
+		results[left], results[right] = results[right], results[left]
 	}
 	writeJSON(w, http.StatusOK, results)
 }
@@ -180,7 +196,11 @@ func (app *application) runDueHTTPMonitors(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	type dueMonitor struct {
+		targetID int64
+		moduleID int64
+	}
+	due := make([]dueMonitor, 0)
 	for rows.Next() {
 		var targetID, moduleID int64
 		var interval int
@@ -188,8 +208,26 @@ func (app *application) runDueHTTPMonitors(ctx context.Context) {
 		if rows.Scan(&targetID, &moduleID, &interval, &lastCheckedAt) != nil || (lastCheckedAt != nil && time.Since(*lastCheckedAt) < time.Duration(interval)*time.Second) {
 			continue
 		}
-		_, _ = app.checkAndStoreHTTPMonitor(ctx, targetID, moduleID)
+		due = append(due, dueMonitor{targetID: targetID, moduleID: moduleID})
 	}
+	if rows.Err() != nil {
+		rows.Close()
+		return
+	}
+	rows.Close()
+
+	semaphore := make(chan struct{}, maxConcurrentHTTPChecks)
+	var checks sync.WaitGroup
+	for _, monitor := range due {
+		checks.Add(1)
+		semaphore <- struct{}{}
+		go func(monitor dueMonitor) {
+			defer checks.Done()
+			defer func() { <-semaphore }()
+			_, _ = app.checkAndStoreHTTPMonitor(ctx, monitor.targetID, monitor.moduleID)
+		}(monitor)
+	}
+	checks.Wait()
 }
 
 func (app *application) checkAndStoreHTTPMonitor(ctx context.Context, targetID, moduleID int64) (httpMonitorResult, error) {
@@ -202,10 +240,21 @@ func (app *application) checkAndStoreHTTPMonitor(ctx context.Context, targetID, 
 	}
 	result := checkPublicHTTPURL(ctx, targetURL)
 	result.TargetID = targetID
-	if _, err := app.db.ExecContext(ctx, `INSERT INTO http_monitor_results(target_id, checked_at, ok, latency_ms, message) VALUES(?, ?, ?, ?, ?)`, targetID, result.CheckedAt, result.OK, result.LatencyMS, result.Message); err != nil {
+	tx, err := app.db.BeginTx(ctx, nil)
+	if err != nil {
 		return httpMonitorResult{}, err
 	}
-	if _, err := app.db.ExecContext(ctx, `UPDATE http_monitor_targets SET last_checked_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, result.CheckedAt, targetID); err != nil {
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO http_monitor_results(target_id, checked_at, ok, latency_ms, message) VALUES(?, ?, ?, ?, ?)`, targetID, result.CheckedAt, result.OK, result.LatencyMS, result.Message); err != nil {
+		return httpMonitorResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM http_monitor_results WHERE target_id = ? AND id NOT IN (SELECT id FROM http_monitor_results WHERE target_id = ? ORDER BY checked_at DESC, id DESC LIMIT ?)`, targetID, targetID, maxHTTPMonitorHistoryEntries); err != nil {
+		return httpMonitorResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE http_monitor_targets SET last_checked_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, result.CheckedAt, targetID); err != nil {
+		return httpMonitorResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return httpMonitorResult{}, err
 	}
 	return result, nil
@@ -221,7 +270,7 @@ func checkPublicHTTPURL(ctx context.Context, rawURL string) httpMonitorResult {
 	started := time.Now()
 	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	request.Header.Set("User-Agent", "Lesezeichen-Hub-HTTP-Monitor/1.0")
-	client := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: publicDialContext}, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{DialContext: publicDialContext}, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	latency := time.Since(started).Milliseconds()
 	result.LatencyMS = &latency

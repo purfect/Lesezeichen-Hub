@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -132,6 +133,109 @@ func TestHTTPMonitorTargetsAreScopedToModule(t *testing.T) {
 	app.handleHTTPMonitorRoutes(deleteResponse, deleteRequest)
 	if deleteResponse.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, want %d", deleteResponse.Code, http.StatusNoContent)
+	}
+}
+
+func TestRunDueHTTPMonitorsStoresDueCheck(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Monitor-Modul", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleID, _ := result.LastInsertId()
+	result, err = db.Exec(`INSERT INTO http_monitor_targets(module_id, name, url, interval_seconds) VALUES(?, ?, ?, ?)`, moduleID, "Lokaler Test", "http://127.0.0.1", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetID, _ := result.LastInsertId()
+	app := &application{db: db}
+
+	done := make(chan struct{})
+	go func() {
+		app.runDueHTTPMonitors(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runDueHTTPMonitors blockiert die SQLite-Verbindung")
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM http_monitor_results WHERE target_id = ?`, targetID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("result count = %d, want 1", count)
+	}
+}
+
+func TestHTTPMonitorResultsReturnNewestEntriesInChronologicalOrder(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Historie-Modul", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleID, _ := result.LastInsertId()
+	result, err = db.Exec(`INSERT INTO http_monitor_targets(module_id, name, url, interval_seconds) VALUES(?, ?, ?, ?)`, moduleID, "Beispiel", "https://example.com", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetID, _ := result.LastInsertId()
+	for index := 1; index <= 205; index++ {
+		if _, err := db.Exec(`INSERT INTO http_monitor_results(target_id, checked_at, ok, latency_ms, message) VALUES(?, ?, 1, ?, ?)`, targetID, time.Date(2026, 1, 1, 0, 0, index, 0, time.UTC), index, "HTTP 200"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := &application{db: db}
+	request := httptest.NewRequest(http.MethodGet, "/api/http-monitor-results?module_id="+strconv.FormatInt(moduleID, 10)+"&target_id="+strconv.FormatInt(targetID, 10), nil)
+	response := httptest.NewRecorder()
+	app.handleHTTPMonitorResults(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var results []httpMonitorResult
+	if err := json.NewDecoder(response.Body).Decode(&results); err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != maxHTTPMonitorHistoryEntries || *results[0].LatencyMS != 6 || *results[len(results)-1].LatencyMS != 205 {
+		t.Fatalf("results = %#v, want chronological entries 6 through 205", results)
+	}
+}
+
+func TestCheckAndStoreHTTPMonitorLimitsHistory(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "Cleanup-Modul", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleID, _ := result.LastInsertId()
+	result, err = db.Exec(`INSERT INTO http_monitor_targets(module_id, name, url, interval_seconds) VALUES(?, ?, ?, ?)`, moduleID, "Lokaler Test", "http://127.0.0.1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetID, _ := result.LastInsertId()
+	app := &application{db: db}
+	for index := 0; index <= maxHTTPMonitorHistoryEntries; index++ {
+		if _, err := app.checkAndStoreHTTPMonitor(context.Background(), targetID, moduleID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM http_monitor_results WHERE target_id = ?`, targetID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != maxHTTPMonitorHistoryEntries {
+		t.Fatalf("result count = %d, want %d", count, maxHTTPMonitorHistoryEntries)
 	}
 }
 
