@@ -69,6 +69,29 @@ func initializeSchema(db *sql.DB) error {
 			best_product_url TEXT NOT NULL DEFAULT ''
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_silver_price_history_fetched_at ON silver_price_history(fetched_at);`,
+		`CREATE TABLE IF NOT EXISTS http_monitor_targets (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			module_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			url TEXT NOT NULL,
+			interval_seconds INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			last_checked_at DATETIME NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(module_id) REFERENCES modules(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_http_monitor_targets_due ON http_monitor_targets(enabled, last_checked_at);`,
+		`CREATE TABLE IF NOT EXISTS http_monitor_results (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			target_id INTEGER NOT NULL,
+			checked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			ok INTEGER NOT NULL,
+			latency_ms INTEGER NULL,
+			message TEXT NOT NULL,
+			FOREIGN KEY(target_id) REFERENCES http_monitor_targets(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_http_monitor_results_target_checked ON http_monitor_results(target_id, checked_at);`,
 	}
 
 	for _, stmt := range statements {

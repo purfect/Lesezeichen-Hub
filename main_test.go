@@ -89,6 +89,52 @@ func TestPublicHTTPURL(t *testing.T) {
 	}
 }
 
+func TestHTTPMonitorTargetsAreScopedToModule(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO modules(name, root_path) VALUES(?, ?)`, "NetzWache", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleID, _ := result.LastInsertId()
+	app := &application{db: db}
+
+	body := bytes.NewBufferString(`{"module_id":` + strconv.FormatInt(moduleID, 10) + `,"name":"Beispiel","url":"https://example.com/","interval_seconds":300}`)
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/http-monitors", body)
+	createResponse := httptest.NewRecorder()
+	app.handleHTTPMonitors(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d: %s", createResponse.Code, http.StatusCreated, createResponse.Body.String())
+	}
+	var target httpMonitorTarget
+	if err := json.NewDecoder(createResponse.Body).Decode(&target); err != nil {
+		t.Fatal(err)
+	}
+	if target.ModuleID != moduleID || target.Name != "Beispiel" {
+		t.Fatalf("target = %#v, want module %d and name Beispiel", target, moduleID)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/http-monitors?module_id="+strconv.FormatInt(moduleID, 10), nil)
+	listResponse := httptest.NewRecorder()
+	app.handleHTTPMonitors(listResponse, listRequest)
+	var targets []httpMonitorTarget
+	if err := json.NewDecoder(listResponse.Body).Decode(&targets); err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].ID != target.ID {
+		t.Fatalf("targets = %#v, want created target", targets)
+	}
+
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/http-monitors/"+strconv.FormatInt(target.ID, 10)+"?module_id="+strconv.FormatInt(moduleID, 10), nil)
+	deleteResponse := httptest.NewRecorder()
+	app.handleHTTPMonitorRoutes(deleteResponse, deleteRequest)
+	if deleteResponse.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want %d", deleteResponse.Code, http.StatusNoContent)
+	}
+}
+
 func TestNormalizeRemoteModuleSourceURL(t *testing.T) {
 	tests := []struct {
 		value        string

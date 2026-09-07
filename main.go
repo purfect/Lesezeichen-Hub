@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
@@ -46,6 +47,9 @@ func main() {
 		log.Fatalf("init embedded web assets: %v", err)
 	}
 	app.webFS = webFS
+	monitorContext, stopMonitors := context.WithCancel(context.Background())
+	defer stopMonitors()
+	go app.runHTTPMonitorScheduler(monitorContext)
 
 	indexHTML, err := fs.ReadFile(webFS, "index.html")
 	if err != nil {
@@ -76,7 +80,9 @@ func main() {
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
 	mux.HandleFunc("/api/silver-prices", app.handleSilverPrices)
 	mux.HandleFunc("/api/silver-price-history", app.handleSilverPriceHistory)
-	mux.HandleFunc("/api/netzwache/check", app.handleNetzWacheCheck)
+	mux.HandleFunc("/api/http-monitors", app.handleHTTPMonitors)
+	mux.HandleFunc("/api/http-monitors/", app.handleHTTPMonitorRoutes)
+	mux.HandleFunc("/api/http-monitor-results", app.handleHTTPMonitorResults)
 	mux.HandleFunc("/silver-preise", app.handleSilverPricesPage)
 	mux.HandleFunc("/silberpreis-verlauf", app.handleSilverPriceHistoryPage)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(webFS))))
