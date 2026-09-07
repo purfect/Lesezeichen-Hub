@@ -76,6 +76,7 @@ func main() {
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
 	mux.HandleFunc("/api/silver-prices", app.handleSilverPrices)
 	mux.HandleFunc("/api/silver-price-history", app.handleSilverPriceHistory)
+	mux.HandleFunc("/api/netzwache/check", app.handleNetzWacheCheck)
 	mux.HandleFunc("/silver-preise", app.handleSilverPricesPage)
 	mux.HandleFunc("/silberpreis-verlauf", app.handleSilverPriceHistoryPage)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(webFS))))

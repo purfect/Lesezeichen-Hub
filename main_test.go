@@ -69,6 +69,26 @@ func TestValidateURL(t *testing.T) {
 	}
 }
 
+func TestPublicHTTPURL(t *testing.T) {
+	tests := []struct {
+		value string
+		valid bool
+	}{
+		{"https://example.com/health", true},
+		{"http://8.8.8.8/", true},
+		{"ftp://example.com", false},
+		{"http://127.0.0.1:3001", false},
+		{"http://192.168.1.10", false},
+	}
+
+	for _, test := range tests {
+		_, err := publicHTTPURL(test.value)
+		if (err == nil) != test.valid {
+			t.Errorf("publicHTTPURL(%q) error = %v, valid = %t", test.value, err, test.valid)
+		}
+	}
+}
+
 func TestNormalizeRemoteModuleSourceURL(t *testing.T) {
 	tests := []struct {
 		value        string
