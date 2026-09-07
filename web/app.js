@@ -15,7 +15,6 @@ const state = {
   },
 };
 
-const metalPricesVisibleKey = "lsz_metal_prices_visible";
 const savedViewsKey = "lsz_saved_views";
 const favoritesQuickbarOrderKey = "lsz_favorites_quickbar_order";
 let pendingRestorePayload = null;
@@ -171,22 +170,40 @@ function toggleTheme() {
   syncThemeToggle();
 }
 
-function areMetalPricesVisible() {
-  return localStorage.getItem(metalPricesVisibleKey) !== "false";
-}
-
-function syncMetalPricesVisibility() {
-  const visible = areMetalPricesVisible();
+async function syncMetalPricesVisibility() {
+  let visible = false;
+  try {
+    const response = await fetch("/api/config", { cache: "no-store" });
+    if (!response.ok) throw new Error(`Fehler (${response.status})`);
+    const config = await response.json();
+    visible = Boolean(config.metal_prices_enabled);
+  } catch (_) {
+    visible = false;
+  }
   document.querySelector(".metal-footer")?.classList.toggle("hidden", !visible);
-  els.toggleMetalPrices.textContent = visible ? "Edelmetallpreise ausblenden" : "Edelmetallpreise anzeigen";
+  els.toggleMetalPrices.textContent = visible ? "Edelmetallpreise ausschalten" : "Edelmetallpreise einschalten";
   els.toggleMetalPrices.setAttribute("aria-pressed", String(visible));
 }
 
-function toggleMetalPricesVisibility() {
-  const visible = !areMetalPricesVisible();
-  localStorage.setItem(metalPricesVisibleKey, String(visible));
-  syncMetalPricesVisibility();
-  window.dispatchEvent(new CustomEvent("metal-prices-visibility-change", { detail: { visible } }));
+async function toggleMetalPricesVisibility() {
+  const visible = els.toggleMetalPrices.getAttribute("aria-pressed") === "true";
+  els.toggleMetalPrices.disabled = true;
+  try {
+    const response = await fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ metal_prices_enabled: !visible }),
+    });
+    if (!response.ok) throw new Error(`Fehler (${response.status})`);
+    const config = await response.json();
+    const enabled = Boolean(config.metal_prices_enabled);
+    document.querySelector(".metal-footer")?.classList.toggle("hidden", !enabled);
+    els.toggleMetalPrices.textContent = enabled ? "Edelmetallpreise ausschalten" : "Edelmetallpreise einschalten";
+    els.toggleMetalPrices.setAttribute("aria-pressed", String(enabled));
+    window.dispatchEvent(new CustomEvent("metal-prices-visibility-change", { detail: { visible: enabled } }));
+  } finally {
+    els.toggleMetalPrices.disabled = false;
+  }
 }
 
 function isTextInput(target) {

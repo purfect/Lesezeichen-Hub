@@ -86,6 +86,14 @@ type silverPricesPayload struct {
 	Source      string          `json:"source"`
 }
 
+type silverPriceHistoryEntry struct {
+	FetchedAt       time.Time `json:"fetched_at"`
+	EURPerGram      float64   `json:"eur_per_g"`
+	BestEURPerOunce float64   `json:"best_eur_per_ounce"`
+	BestProductName string    `json:"best_product_name"`
+	BestProductURL  string    `json:"best_product_url"`
+}
+
 type group struct {
 	ID          int64      `json:"id"`
 	Name        string     `json:"name"`
@@ -340,7 +348,9 @@ func main() {
 	mux.HandleFunc("/modules/", app.handleModuleFiles)
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
 	mux.HandleFunc("/api/silver-prices", app.handleSilverPrices)
+	mux.HandleFunc("/api/silver-price-history", app.handleSilverPriceHistory)
 	mux.HandleFunc("/silver-preise", app.handleSilverPricesPage)
+	mux.HandleFunc("/silberpreis-verlauf", app.handleSilverPriceHistoryPage)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(webFS))))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -1565,6 +1575,15 @@ func initializeSchema(db *sql.DB) error {
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS silver_price_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			fetched_at DATETIME NOT NULL UNIQUE,
+			eur_per_g REAL NOT NULL,
+			best_eur_per_ounce REAL NOT NULL,
+			best_product_name TEXT NOT NULL DEFAULT '',
+			best_product_url TEXT NOT NULL DEFAULT ''
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_silver_price_history_fetched_at ON silver_price_history(fetched_at);`,
 	}
 
 	for _, stmt := range statements {
@@ -1630,11 +1649,38 @@ func (app *application) handleState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{
+			"external_prices":      app.externalPrices,
+			"metal_prices_enabled": app.metalPricesEnabled(),
+			"version":              appVersion,
+		})
+	case http.MethodPut:
+		var input struct {
+			MetalPricesEnabled *bool `json:"metal_prices_enabled"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&input); err != nil || input.MetalPricesEnabled == nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("metal_prices_enabled muss angegeben werden"))
+			return
+		}
+		value := "false"
+		if *input.MetalPricesEnabled {
+			value = "true"
+		}
+		if _, err := app.db.ExecContext(r.Context(), `INSERT INTO app_settings(key, value) VALUES('metal_prices_enabled', ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, value); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"metal_prices_enabled": *input.MetalPricesEnabled})
+	default:
 		methodNotAllowed(w)
-		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"external_prices": app.externalPrices, "version": appVersion})
+}
+
+func (app *application) metalPricesEnabled() bool {
+	return app.externalPrices && readAppSetting(app.db, "metal_prices_enabled") != "false"
 }
 
 func (app *application) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
@@ -2867,7 +2913,7 @@ func (app *application) handleMetalPrices(w http.ResponseWriter, r *http.Request
 		methodNotAllowed(w)
 		return
 	}
-	if !app.externalPrices {
+	if !app.metalPricesEnabled() {
 		writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("externe preisabfragen sind deaktiviert"))
 		return
 	}
@@ -2877,6 +2923,7 @@ func (app *application) handleMetalPrices(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadGateway, err)
 		return
 	}
+	app.saveSilverPriceSnapshot(r.Context(), prices)
 
 	writeJSON(w, http.StatusOK, prices)
 }
@@ -2886,7 +2933,7 @@ func (app *application) handleSilverPrices(w http.ResponseWriter, r *http.Reques
 		methodNotAllowed(w)
 		return
 	}
-	if !app.externalPrices {
+	if !app.metalPricesEnabled() {
 		writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("externe preisabfragen sind deaktiviert"))
 		return
 	}
@@ -2899,6 +2946,59 @@ func (app *application) handleSilverPrices(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, prices)
+}
+
+func (app *application) saveSilverPriceSnapshot(ctx context.Context, metal metalPricesPayload) {
+	if metal.SilverEURPerGram <= 0 {
+		return
+	}
+
+	silver, err := app.getSilverPrices(ctx, false)
+	if err != nil || silver.BestProduct == nil || silver.BestProduct.Price <= 0 {
+		return
+	}
+
+	fetchedAt := metal.FetchedAt
+	if silver.FetchedAt.After(fetchedAt) {
+		fetchedAt = silver.FetchedAt
+	}
+	_, err = app.db.ExecContext(ctx, `INSERT OR IGNORE INTO silver_price_history
+		(fetched_at, eur_per_g, best_eur_per_ounce, best_product_name, best_product_url)
+		VALUES (?, ?, ?, ?, ?)`, fetchedAt, metal.SilverEURPerGram, silver.BestProduct.Price, silver.BestProduct.Name, silver.BestProduct.URL)
+	if err != nil {
+		log.Printf("save silver price snapshot: %v", err)
+	}
+}
+
+func (app *application) handleSilverPriceHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+
+	rows, err := app.db.QueryContext(r.Context(), `SELECT fetched_at, eur_per_g, best_eur_per_ounce, best_product_name, best_product_url
+		FROM silver_price_history ORDER BY fetched_at ASC`)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer rows.Close()
+
+	entries := make([]silverPriceHistoryEntry, 0)
+	for rows.Next() {
+		var entry silverPriceHistoryEntry
+		if err := rows.Scan(&entry.FetchedAt, &entry.EURPerGram, &entry.BestEURPerOunce, &entry.BestProductName, &entry.BestProductURL); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, entries)
 }
 
 func (app *application) getSilverPrices(ctx context.Context, forceRefresh bool) (silverPricesPayload, error) {
@@ -2951,6 +3051,25 @@ func (app *application) handleSilverPricesPage(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(page); err != nil {
 		log.Printf("write silver-prices.html: %v", err)
+	}
+}
+
+func (app *application) handleSilverPriceHistoryPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+
+	page, err := fs.ReadFile(app.webFS, "silver-price-history.html")
+	if err != nil {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("seite nicht gefunden"))
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(page); err != nil {
+		log.Printf("write silver-price-history.html: %v", err)
 	}
 }
 

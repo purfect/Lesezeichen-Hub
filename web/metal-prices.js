@@ -11,16 +11,8 @@ if (metalPriceEls.gold && metalPriceEls.silver && metalPriceEls.bestSilver && me
 }
 
 function initMetalPricesFooter() {
-  if (!areMetalPricesVisible()) {
-    document.querySelector(".metal-footer")?.classList.add("hidden");
-    return;
-  }
   loadMetalPrices();
   setInterval(loadMetalPrices, 2 * 60 * 60 * 1000);
-}
-
-function areMetalPricesVisible() {
-  return localStorage.getItem("lsz_metal_prices_visible") !== "false";
 }
 
 window.addEventListener("metal-prices-visibility-change", (event) => {
@@ -34,7 +26,7 @@ async function loadMetalPrices() {
     const configResponse = await fetch("/api/config");
     if (!configResponse.ok) throw new Error(`Fehler (${configResponse.status})`);
     const config = await configResponse.json();
-    if (!config.external_prices) {
+    if (!config.metal_prices_enabled) {
       document.querySelector(".metal-footer")?.classList.add("hidden");
       return;
     }

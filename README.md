@@ -19,6 +19,7 @@ Die Anwendung laeuft komplett lokal, bietet Gruppen, Tags, Favoriten, Wiedervorl
 - Favoriten und angepinnte Eintraege
 - Suche ueber Titel, URL, Notizen, Tags und Gruppen
 - Öffnungs- und Nutzungsstatistik fuer Lesezeichen
+- Silberpreisverlauf mit gespeichertem Silberankauf in EUR/g und günstigstem 1oz-Angebot
 - Schnellfilter fuer Gruppen, Tags, Favoriten, Pins und faellige Wiedervorlagen
 - Gespeicherte Ansichten fuer wiederkehrende Suchen und Filter
 - Drag and Drop Sortierung fuer Gruppen und Lesezeichen
@@ -216,6 +217,7 @@ Die Update-Installation funktioniert nur unter Windows aus einer laufenden `.exe
 - DELETE /api/modules/{id}
 - GET /api/module-catalog
 - POST /api/module-catalog/{repository}/install
+- GET /api/silver-price-history
 
 Wiederherstellungen werden vor dem Einspielen mit `POST /api/restore?preview=1` geprüft. Der Assistent erstellt auf Wunsch zuerst eine neue Vollsicherung und unterstützt die Konfliktstrategien `overwrite` und `skip`.
 

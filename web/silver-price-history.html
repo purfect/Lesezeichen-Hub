@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Silberpreisverlauf</title>
+  <script src="/static/theme.js"></script>
+  <script src="/static/navigation.js" defer></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    body { min-height: 100vh; display: flex; flex-direction: column; }
+    .history-page { flex: 1; padding: 20px clamp(16px, 3vw, 36px) 28px; position: relative; z-index: 2; }
+    .history-panel { border: 1px solid var(--line); border-radius: 12px; background: rgba(13, 22, 36, 0.9); box-shadow: 0 14px 34px rgba(2, 8, 16, 0.44); padding: 18px; }
+    .history-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 16px; }
+    .history-head h2 { margin: 0; }
+    .history-head p { color: var(--muted); margin: 6px 0 0; }
+    .history-legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 0.9rem; }
+    .history-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .history-legend i { width: 12px; height: 3px; display: inline-block; }
+    .history-chart-wrap { height: min(52vw, 430px); min-height: 260px; border: 1px solid rgba(147, 170, 201, 0.2); background: rgba(17, 29, 45, 0.7); }
+    #history-chart { display: block; width: 100%; height: 100%; }
+    .history-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+    .history-value { border-left: 3px solid #6de0cf; padding: 5px 10px; background: rgba(20, 44, 55, 0.45); }
+    .history-value:nth-child(2) { border-color: #f5bf67; }
+    .history-value:nth-child(3) { border-color: #93aac9; }
+    .history-value span, .history-status { display: block; color: var(--muted); font-size: 0.9rem; }
+    .history-value strong { display: block; margin-top: 3px; color: var(--ink); font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+    .history-status { margin: 14px 0 0; }
+    @media (max-width: 700px) { .history-head { flex-direction: column; } .history-summary { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="bg-shape bg-shape-1"></div>
+  <div class="bg-shape bg-shape-2"></div>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Edelmetall</p>
+      <h1>Silberpreisverlauf</h1>
+      <p class="search-info">Gespeicherte Preisstände aus den lokalen Preisabfragen.</p>
+    </div>
+  </header>
+  <main class="history-page">
+    <section class="history-panel">
+      <div class="history-head">
+        <div><h2>Preisentwicklung</h2><p>Silberankauf in Euro je Gramm und günstigstes 1oz-Angebot.</p></div>
+        <div class="history-legend"><span><i style="background:#6de0cf"></i>Silber €/g</span><span><i style="background:#f5bf67"></i>Top 1oz €</span></div>
+      </div>
+      <div class="history-chart-wrap"><canvas id="history-chart" aria-label="Diagramm der Silberpreisentwicklung" role="img"></canvas></div>
+      <div id="history-summary" class="history-summary"></div>
+      <p id="history-status" class="history-status">Lade gespeicherte Preisstände...</p>
+    </section>
+  </main>
+  <footer class="metal-footer" aria-live="polite">
+    <div class="metal-footer-inner"><p class="metal-footer-title">Edelmetall Ankauf (Bankhandelsfaehig)</p><p class="metal-footer-values"><span>Gold: <strong id="metal-price-gold">-</strong></span><span>Silber: <strong id="metal-price-silver">-</strong></span><span>Top 1oz: <strong><a id="metal-price-best-silver" href="/silver-preise">-</a></strong></span></p><p id="metal-price-updated" class="metal-footer-updated">Stand: -</p><p id="metal-price-hint" class="metal-footer-hint">Quelle: scheideanstalt.de</p></div>
+  </footer>
+  <script src="/static/metal-prices.js" defer></script>
+  <script>
+    const currency = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+    const chart = document.getElementById('history-chart');
+    const status = document.getElementById('history-status');
+    let entries = [];
+
+    async function loadHistory() {
+      try { await fetch('/api/metal-prices', { cache: 'no-store' }); } catch (_) { /* Historie bleibt auch ohne neue Abfrage sichtbar. */ }
+      try {
+        const response = await fetch('/api/silver-price-history', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Verlauf konnte nicht geladen werden (${response.status})`);
+        entries = await response.json();
+        renderSummary();
+        drawChart();
+        status.textContent = entries.length ? `${entries.length} gespeicherte Preisstände. Letzte Abfrage: ${new Date(entries.at(-1).fetched_at).toLocaleString('de-DE')}.` : 'Noch keine gültigen Preisstände gespeichert.';
+      } catch (error) { status.textContent = error.message; }
+    }
+
+    function renderSummary() {
+      const summary = document.getElementById('history-summary');
+      if (!entries.length) { summary.innerHTML = ''; return; }
+      const latest = entries.at(-1);
+      const first = entries[0];
+      const change = latest.best_eur_per_ounce - first.best_eur_per_ounce;
+      summary.innerHTML = `<div class="history-value"><span>Aktuell Silber</span><strong>${currency.format(latest.eur_per_g)} €/g</strong></div><div class="history-value"><span>Aktuell günstigste 1oz</span><strong>${currency.format(latest.best_eur_per_ounce)} €</strong></div><div class="history-value"><span>Änderung 1oz seit Start</span><strong>${change >= 0 ? '+' : ''}${currency.format(change)} €</strong></div>`;
+    }
+
+    function drawChart() {
+      const context = chart.getContext('2d');
+      const rect = chart.getBoundingClientRect();
+      const scale = window.devicePixelRatio || 1;
+      chart.width = Math.round(rect.width * scale); chart.height = Math.round(rect.height * scale);
+      context.scale(scale, scale); context.clearRect(0, 0, rect.width, rect.height);
+      if (!entries.length) return;
+      const width = rect.width, height = rect.height, pad = { top: 24, right: 58, bottom: 42, left: 58 };
+      const plotWidth = width - pad.left - pad.right, plotHeight = height - pad.top - pad.bottom;
+      const series = [{ key: 'eur_per_g', color: '#6de0cf', left: true }, { key: 'best_eur_per_ounce', color: '#f5bf67', left: false }];
+      context.font = '12px DM Sans, sans-serif'; context.lineWidth = 1;
+      for (let index = 0; index <= 4; index++) {
+        const y = pad.top + (plotHeight * index / 4); context.strokeStyle = 'rgba(147,170,201,.18)'; context.beginPath(); context.moveTo(pad.left, y); context.lineTo(width - pad.right, y); context.stroke();
+      }
+      series.forEach((line) => {
+        const values = entries.map((entry) => Number(entry[line.key]));
+        const min = Math.min(...values), max = Math.max(...values), range = max - min || Math.max(max * 0.02, 0.01);
+        const lower = min - range * 0.12, upper = max + range * 0.12;
+        const point = (value, index) => ({ x: pad.left + (entries.length === 1 ? plotWidth / 2 : index * plotWidth / (entries.length - 1)), y: pad.top + (upper - value) * plotHeight / (upper - lower) });
+        context.fillStyle = line.color; context.textAlign = line.left ? 'right' : 'left';
+        for (let index = 0; index <= 4; index++) { const value = upper - (upper - lower) * index / 4; context.fillText(currency.format(value), line.left ? pad.left - 8 : width - pad.right + 8, pad.top + plotHeight * index / 4 + 4); }
+        context.strokeStyle = line.color; context.lineWidth = 2.5; context.beginPath(); values.forEach((value, index) => { const p = point(value, index); index ? context.lineTo(p.x, p.y) : context.moveTo(p.x, p.y); }); context.stroke();
+        context.fillStyle = line.color; values.forEach((value, index) => { const p = point(value, index); context.beginPath(); context.arc(p.x, p.y, 3, 0, Math.PI * 2); context.fill(); });
+      });
+      context.fillStyle = '#93aac9'; context.textAlign = 'left'; context.fillText(new Date(entries[0].fetched_at).toLocaleDateString('de-DE'), pad.left, height - 14); context.textAlign = 'right'; context.fillText(new Date(entries.at(-1).fetched_at).toLocaleDateString('de-DE'), width - pad.right, height - 14);
+    }
+    window.addEventListener('resize', drawChart); loadHistory();
+  </script>
+</body>
+</html>

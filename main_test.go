@@ -129,6 +129,34 @@ func TestNormalizeBookmarkURL(t *testing.T) {
 	}
 }
 
+func TestSilverPriceHistoryReturnsStoredEntries(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	fetchedAt := "2026-09-07T12:00:00Z"
+	if _, err := db.Exec(`INSERT INTO silver_price_history (fetched_at, eur_per_g, best_eur_per_ounce, best_product_name, best_product_url) VALUES (?, ?, ?, ?, ?)`, fetchedAt, 1.23, 38.45, "Silbermünze", "https://example.com/silber"); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &application{db: db}
+	request := httptest.NewRequest(http.MethodGet, "/api/silver-price-history", nil)
+	response := httptest.NewRecorder()
+	app.handleSilverPriceHistory(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var entries []silverPriceHistoryEntry
+	if err := json.NewDecoder(response.Body).Decode(&entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].EURPerGram != 1.23 || entries[0].BestEURPerOunce != 38.45 {
+		t.Fatalf("entries = %#v, want gespeicherten Silberpreis", entries)
+	}
+}
+
 func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
@@ -884,6 +912,28 @@ func TestMetalPricesAreUnavailableWhenDisabled(t *testing.T) {
 
 	if response.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestDisablingMetalPricesBlocksPriceCollection(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	app := &application{db: db, externalPrices: true}
+
+	request := httptest.NewRequest(http.MethodPut, "/api/config", strings.NewReader(`{"metal_prices_enabled":false}`))
+	response := httptest.NewRecorder()
+	app.handleConfig(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("config status = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/metal-prices", nil)
+	response = httptest.NewRecorder()
+	app.handleMetalPrices(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Errorf("price status = %d, want %d", response.Code, http.StatusServiceUnavailable)
 	}
 }
 
