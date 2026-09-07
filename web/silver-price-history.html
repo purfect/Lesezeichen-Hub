@@ -27,6 +27,11 @@
     .history-custom input { min-height: 36px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; background: rgba(17, 29, 45, 0.9); color: var(--ink); font: inherit; }
     .history-chart-wrap { height: min(52vw, 430px); min-height: 260px; border: 1px solid rgba(147, 170, 201, 0.2); background: rgba(17, 29, 45, 0.7); }
     #history-chart { display: block; width: 100%; height: 100%; }
+    :root[data-theme="terminal"] .history-panel { border-radius: 0; background: #000; box-shadow: none; }
+    :root[data-theme="terminal"] .history-chart-wrap { border-color: rgba(237, 237, 237, 0.2); background: #000; }
+    :root[data-theme="terminal"] .history-legend-silver { background: #8cff3b !important; }
+    :root[data-theme="terminal"] .history-legend-offer { background: #f2f2f2 !important; }
+    :root[data-theme="terminal"] .history-value, :root[data-theme="terminal"] .history-value:nth-child(n) { border-color: #8cff3b; background: #0b120a; }
     .history-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
     .history-value { border-left: 3px solid #6de0cf; padding: 5px 10px; background: rgba(20, 44, 55, 0.45); }
     .history-value:nth-child(2) { border-color: #f5bf67; }
@@ -34,7 +39,7 @@
     .history-value span, .history-status { display: block; color: var(--muted); font-size: 0.9rem; }
     .history-value strong { display: block; margin-top: 3px; color: var(--ink); font-size: 1.15rem; font-variant-numeric: tabular-nums; }
     .history-status { margin: 14px 0 0; }
-    @media (max-width: 700px) { .history-head { flex-direction: column; } .history-summary { grid-template-columns: 1fr; } }
+    @media (max-width: 700px) { .history-head { flex-direction: column; } .history-periods { width: 100%; } .history-periods button { flex: 1 1 auto; } .history-summary { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -51,7 +56,7 @@
     <section class="history-panel">
       <div class="history-head">
         <div><h2>Preisentwicklung</h2><p>Silberankauf in Euro je Gramm und günstigstes 1oz-Angebot.</p></div>
-        <div class="history-legend"><span><i style="background:#6de0cf"></i>Silber €/g</span><span><i style="background:#f5bf67"></i>Top 1oz €</span></div>
+        <div class="history-legend"><span><i class="history-legend-silver" style="background:#6de0cf"></i>Silber €/g</span><span><i class="history-legend-offer" style="background:#f5bf67"></i>Top 1oz €</span></div>
       </div>
       <div class="history-controls" aria-label="Zeitraum auswählen">
         <div class="history-periods" role="group" aria-label="Vordefinierter Zeitraum">
@@ -124,14 +129,19 @@
       const rect = chart.getBoundingClientRect();
       const scale = window.devicePixelRatio || 1;
       chart.width = Math.round(rect.width * scale); chart.height = Math.round(rect.height * scale);
-      context.scale(scale, scale); context.clearRect(0, 0, rect.width, rect.height);
+      context.setTransform(scale, 0, 0, scale, 0, 0); context.clearRect(0, 0, rect.width, rect.height);
       if (!entries.length) return;
       const width = rect.width, height = rect.height, pad = { top: 24, right: 58, bottom: 42, left: 58 };
       const plotWidth = width - pad.left - pad.right, plotHeight = height - pad.top - pad.bottom;
-      const series = [{ key: 'eur_per_g', color: '#6de0cf', left: true }, { key: 'best_eur_per_ounce', color: '#f5bf67', left: false }];
+      const terminal = window.getLesezeichenTheme?.() === 'terminal';
+      const series = terminal
+        ? [{ key: 'eur_per_g', color: '#8cff3b', left: true }, { key: 'best_eur_per_ounce', color: '#f2f2f2', left: false }]
+        : [{ key: 'eur_per_g', color: '#6de0cf', left: true }, { key: 'best_eur_per_ounce', color: '#f5bf67', left: false }];
+      const gridColor = terminal ? 'rgba(237,237,237,.2)' : 'rgba(147,170,201,.18)';
+      const labelColor = terminal ? '#b8b8b8' : '#93aac9';
       context.font = '12px DM Sans, sans-serif'; context.lineWidth = 1;
       for (let index = 0; index <= 4; index++) {
-        const y = pad.top + (plotHeight * index / 4); context.strokeStyle = 'rgba(147,170,201,.18)'; context.beginPath(); context.moveTo(pad.left, y); context.lineTo(width - pad.right, y); context.stroke();
+        const y = pad.top + (plotHeight * index / 4); context.strokeStyle = gridColor; context.beginPath(); context.moveTo(pad.left, y); context.lineTo(width - pad.right, y); context.stroke();
       }
       series.forEach((line) => {
         const values = entries.map((entry) => Number(entry[line.key]));
@@ -143,7 +153,7 @@
         context.strokeStyle = line.color; context.lineWidth = 2.5; context.beginPath(); values.forEach((value, index) => { const p = point(value, index); index ? context.lineTo(p.x, p.y) : context.moveTo(p.x, p.y); }); context.stroke();
         context.fillStyle = line.color; values.forEach((value, index) => { const p = point(value, index); context.beginPath(); context.arc(p.x, p.y, 3, 0, Math.PI * 2); context.fill(); });
       });
-      context.fillStyle = '#93aac9'; context.textAlign = 'left'; context.fillText(new Date(entries[0].fetched_at).toLocaleDateString('de-DE'), pad.left, height - 14); context.textAlign = 'right'; context.fillText(new Date(entries.at(-1).fetched_at).toLocaleDateString('de-DE'), width - pad.right, height - 14);
+      context.fillStyle = labelColor; context.textAlign = 'left'; context.fillText(new Date(entries[0].fetched_at).toLocaleDateString('de-DE'), pad.left, height - 14); context.textAlign = 'right'; context.fillText(new Date(entries.at(-1).fetched_at).toLocaleDateString('de-DE'), width - pad.right, height - 14);
     }
     periodButtons.forEach((button) => button.addEventListener('click', () => {
       const period = button.dataset.period;
@@ -157,7 +167,10 @@
     });
     const initialRange = rangeForPeriod('month');
     fromInput.value = initialRange.from; toInput.value = initialRange.to;
-    window.addEventListener('resize', drawChart); loadHistory(initialRange, true);
+    window.addEventListener('lesezeichen-theme-change', drawChart);
+    window.addEventListener('resize', drawChart);
+    drawChart();
+    loadHistory(initialRange, true);
   </script>
 </body>
 </html>
