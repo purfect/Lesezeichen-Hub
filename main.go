@@ -2976,8 +2976,24 @@ func (app *application) handleSilverPriceHistory(w http.ResponseWriter, r *http.
 		return
 	}
 
-	rows, err := app.db.QueryContext(r.Context(), `SELECT fetched_at, eur_per_g, best_eur_per_ounce, best_product_name, best_product_url
-		FROM silver_price_history ORDER BY fetched_at ASC`)
+	from, err := parseHistoryDate(r.URL.Query().Get("from"), false)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	to, err := parseHistoryDate(r.URL.Query().Get("to"), true)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if !from.IsZero() && !to.IsZero() && from.After(to) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("startdatum darf nicht nach dem enddatum liegen"))
+		return
+	}
+
+	query := `SELECT fetched_at, eur_per_g, best_eur_per_ounce, best_product_name, best_product_url
+		FROM silver_price_history WHERE (? = '' OR substr(fetched_at, 1, 10) >= ?) AND (? = '' OR substr(fetched_at, 1, 10) <= ?) ORDER BY fetched_at ASC`
+	rows, err := app.db.QueryContext(r.Context(), query, historyDateValue(from), historyDateValue(from), historyDateValue(to), historyDateValue(to))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -2999,6 +3015,28 @@ func (app *application) handleSilverPriceHistory(w http.ResponseWriter, r *http.
 	}
 
 	writeJSON(w, http.StatusOK, entries)
+}
+
+func parseHistoryDate(raw string, endOfDay bool) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	value, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("datum muss das Format JJJJ-MM-TT haben")
+	}
+	if endOfDay {
+		return value.AddDate(0, 0, 1).Add(-time.Nanosecond), nil
+	}
+	return value, nil
+}
+
+func historyDateValue(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format("2006-01-02")
 }
 
 func (app *application) getSilverPrices(ctx context.Context, forceRefresh bool) (silverPricesPayload, error) {

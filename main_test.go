@@ -157,6 +157,34 @@ func TestSilverPriceHistoryReturnsStoredEntries(t *testing.T) {
 	}
 }
 
+func TestSilverPriceHistoryFiltersByDateRange(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, fetchedAt := range []string{"2026-08-01T12:00:00Z", "2026-09-07T12:00:00Z"} {
+		if _, err := db.Exec(`INSERT INTO silver_price_history (fetched_at, eur_per_g, best_eur_per_ounce) VALUES (?, ?, ?)`, fetchedAt, 1.23, 38.45); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	app := &application{db: db}
+	request := httptest.NewRequest(http.MethodGet, "/api/silver-price-history?from=2026-09-01&to=2026-09-07", nil)
+	response := httptest.NewRecorder()
+	app.handleSilverPriceHistory(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var entries []silverPriceHistoryEntry
+	if err := json.NewDecoder(response.Body).Decode(&entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].FetchedAt.Format("2006-01-02") != "2026-09-07" {
+		t.Fatalf("entries = %#v, want nur September-Messpunkt", entries)
+	}
+}
+
 func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {

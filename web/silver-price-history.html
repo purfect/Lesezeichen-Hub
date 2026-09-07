@@ -17,6 +17,14 @@
     .history-legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 0.9rem; }
     .history-legend span { display: inline-flex; align-items: center; gap: 6px; }
     .history-legend i { width: 12px; height: 3px; display: inline-block; }
+    .history-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-bottom: 16px; }
+    .history-periods { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+    .history-periods button, .history-custom button { min-height: 36px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; color: var(--ink); background: rgba(20, 34, 51, 0.9); font: inherit; }
+    .history-periods button[aria-pressed="true"], .history-custom button { border-color: rgba(76, 219, 194, 0.68); background: rgba(22, 74, 72, 0.72); color: #dffbf6; }
+    .history-custom { display: none; align-items: end; flex-wrap: wrap; gap: 8px; }
+    .history-custom.visible { display: flex; }
+    .history-custom label { display: grid; gap: 4px; color: var(--muted); font-size: 0.8rem; }
+    .history-custom input { min-height: 36px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; background: rgba(17, 29, 45, 0.9); color: var(--ink); font: inherit; }
     .history-chart-wrap { height: min(52vw, 430px); min-height: 260px; border: 1px solid rgba(147, 170, 201, 0.2); background: rgba(17, 29, 45, 0.7); }
     #history-chart { display: block; width: 100%; height: 100%; }
     .history-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
@@ -45,6 +53,20 @@
         <div><h2>Preisentwicklung</h2><p>Silberankauf in Euro je Gramm und günstigstes 1oz-Angebot.</p></div>
         <div class="history-legend"><span><i style="background:#6de0cf"></i>Silber €/g</span><span><i style="background:#f5bf67"></i>Top 1oz €</span></div>
       </div>
+      <div class="history-controls" aria-label="Zeitraum auswählen">
+        <div class="history-periods" role="group" aria-label="Vordefinierter Zeitraum">
+          <button type="button" data-period="day" aria-pressed="false">Tag</button>
+          <button type="button" data-period="week" aria-pressed="false">Woche</button>
+          <button type="button" data-period="month" aria-pressed="true">Monat</button>
+          <button type="button" data-period="year" aria-pressed="false">Jahr</button>
+          <button type="button" data-period="custom" aria-pressed="false">Benutzerdefiniert</button>
+        </div>
+        <div id="history-custom" class="history-custom">
+          <label>Von<input id="history-from" type="date" /></label>
+          <label>Bis<input id="history-to" type="date" /></label>
+          <button id="history-apply" type="button">Anwenden</button>
+        </div>
+      </div>
       <div class="history-chart-wrap"><canvas id="history-chart" aria-label="Diagramm der Silberpreisentwicklung" role="img"></canvas></div>
       <div id="history-summary" class="history-summary"></div>
       <p id="history-status" class="history-status">Lade gespeicherte Preisstände...</p>
@@ -58,12 +80,28 @@
     const currency = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
     const chart = document.getElementById('history-chart');
     const status = document.getElementById('history-status');
+    const periodButtons = [...document.querySelectorAll('[data-period]')];
+    const customControls = document.getElementById('history-custom');
+    const fromInput = document.getElementById('history-from');
+    const toInput = document.getElementById('history-to');
     let entries = [];
 
-    async function loadHistory() {
-      try { await fetch('/api/metal-prices', { cache: 'no-store' }); } catch (_) { /* Historie bleibt auch ohne neue Abfrage sichtbar. */ }
+    function dateValue(date) { return date.toLocaleDateString('en-CA'); }
+
+    function rangeForPeriod(period) {
+      const today = new Date();
+      const from = new Date(today);
+      if (period === 'week') from.setDate(from.getDate() - 6);
+      if (period === 'month') from.setMonth(from.getMonth() - 1);
+      if (period === 'year') from.setFullYear(from.getFullYear() - 1);
+      return { from: dateValue(from), to: dateValue(today) };
+    }
+
+    async function loadHistory(range = rangeForPeriod('month'), refreshPrice = false) {
+      if (refreshPrice) try { await fetch('/api/metal-prices', { cache: 'no-store' }); } catch (_) { /* Historie bleibt auch ohne neue Abfrage sichtbar. */ }
       try {
-        const response = await fetch('/api/silver-price-history', { cache: 'no-store' });
+        const search = new URLSearchParams(range).toString();
+        const response = await fetch(`/api/silver-price-history?${search}`, { cache: 'no-store' });
         if (!response.ok) throw new Error(`Verlauf konnte nicht geladen werden (${response.status})`);
         entries = await response.json();
         renderSummary();
@@ -107,7 +145,19 @@
       });
       context.fillStyle = '#93aac9'; context.textAlign = 'left'; context.fillText(new Date(entries[0].fetched_at).toLocaleDateString('de-DE'), pad.left, height - 14); context.textAlign = 'right'; context.fillText(new Date(entries.at(-1).fetched_at).toLocaleDateString('de-DE'), width - pad.right, height - 14);
     }
-    window.addEventListener('resize', drawChart); loadHistory();
+    periodButtons.forEach((button) => button.addEventListener('click', () => {
+      const period = button.dataset.period;
+      periodButtons.forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+      customControls.classList.toggle('visible', period === 'custom');
+      if (period !== 'custom') loadHistory(rangeForPeriod(period));
+    }));
+    document.getElementById('history-apply').addEventListener('click', () => {
+      if (!fromInput.value || !toInput.value) { status.textContent = 'Bitte Start- und Enddatum auswählen.'; return; }
+      loadHistory({ from: fromInput.value, to: toInput.value });
+    });
+    const initialRange = rangeForPeriod('month');
+    fromInput.value = initialRange.from; toInput.value = initialRange.to;
+    window.addEventListener('resize', drawChart); loadHistory(initialRange, true);
   </script>
 </body>
 </html>
