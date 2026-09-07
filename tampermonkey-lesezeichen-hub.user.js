@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Lesezeichen Hub Saver
 // @namespace    https://local.lesezeichen-hub
-// @version      1.1.1
+// @version      1.1.2
 // @description  Speichert die aktuelle Webseite direkt im lokalen Lesezeichen-Hub.
 // @match        *://*/*
 // @grant        GM_registerMenuCommand
@@ -136,45 +136,111 @@
     const host = document.createElement("div");
     host.id = "lesezeichen-hub-save-dialog";
     const shadow = host.attachShadow({ mode: "closed" });
-    const groupOptions = groups.map((group, index) => {
-      const selected = group.id === preferred || (!preferred && index === 0) ? " selected" : "";
-      return `<option value="${group.id}"${selected}>${escapeHTML(group.name)}</option>`;
-    }).join("");
-    const tagOptions = tagSuggestions.map((tag) => `<option value="${escapeHTML(tag)}"></option>`).join("");
-    shadow.innerHTML = `
-      <style>
-        :host { all: initial; }
-        .backdrop { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; padding: 16px; background: rgba(5, 12, 20, .68); font-family: "Segoe UI", sans-serif; color: #e8eef7; }
-        form { width: min(440px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; border: 1px solid #365069; border-radius: 10px; background: #101a27; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }
-        header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-        h2 { margin: 0; font-size: 20px; letter-spacing: 0; }
-        label { display: grid; gap: 5px; margin: 10px 0; font-size: 13px; color: #b8c5d8; }
-        input, textarea, select, button { box-sizing: border-box; font: inherit; }
-        input, textarea, select { width: 100%; padding: 9px 10px; border: 1px solid #365069; border-radius: 7px; color: #e8eef7; background: #0a121d; }
-        textarea { min-height: 70px; resize: vertical; }
-        .checks { display: flex; gap: 18px; }
-        .checks label { display: flex; align-items: center; gap: 7px; color: #e8eef7; }
-        .checks input { width: auto; }
-        .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-        button { min-height: 40px; padding: 8px 13px; border: 1px solid #365069; border-radius: 7px; cursor: pointer; color: #e8eef7; background: #18283a; }
-        button[type="submit"] { border-color: #2cb7a1; color: #041512; background: #2cb7a1; font-weight: 700; }
-        .close { width: 40px; padding: 0; font-size: 20px; }
-      </style>
-      <div class="backdrop">
-        <form>
-          <header><h2>Im Lesezeichen-Hub speichern</h2><button class="close" type="button" aria-label="Schließen">×</button></header>
-          <label>Gruppe<select name="group">${groupOptions}</select></label>
-          <label>Titel<input name="title" value="${escapeHTML(fallbackTitle)}" maxlength="120" required /></label>
-          <label>Notiz<textarea name="notes" maxlength="500" placeholder="Optional"></textarea></label>
-          <label>Tags<input name="tags" list="hub-tag-suggestions" placeholder="Kommagetrennt" /><datalist id="hub-tag-suggestions">${tagOptions}</datalist></label>
-          <div class="checks"><label><input name="favorite" type="checkbox" /> Favorit</label><label><input name="pinned" type="checkbox" /> Angepinnt</label></div>
-          <div class="actions"><button class="cancel" type="button">Abbrechen</button><button type="submit">Speichern</button></div>
-        </form>
-      </div>`;
+    const style = document.createElement("style");
+    style.textContent = `
+      :host { all: initial; }
+      .backdrop { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; padding: 16px; background: rgba(5, 12, 20, .68); font-family: "Segoe UI", sans-serif; color: #e8eef7; }
+      form { width: min(440px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; border: 1px solid #365069; border-radius: 10px; background: #101a27; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+      h2 { margin: 0; font-size: 20px; letter-spacing: 0; }
+      label { display: grid; gap: 5px; margin: 10px 0; font-size: 13px; color: #b8c5d8; }
+      input, textarea, select, button { box-sizing: border-box; font: inherit; }
+      input, textarea, select { width: 100%; padding: 9px 10px; border: 1px solid #365069; border-radius: 7px; color: #e8eef7; background: #0a121d; }
+      textarea { min-height: 70px; resize: vertical; }
+      .checks { display: flex; gap: 18px; }
+      .checks label { display: flex; align-items: center; gap: 7px; color: #e8eef7; }
+      .checks input { width: auto; }
+      .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+      button { min-height: 40px; padding: 8px 13px; border: 1px solid #365069; border-radius: 7px; cursor: pointer; color: #e8eef7; background: #18283a; }
+      button[type="submit"] { border-color: #2cb7a1; color: #041512; background: #2cb7a1; font-weight: 700; }
+      .close { width: 40px; padding: 0; font-size: 20px; }
+    `;
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "backdrop";
+    const form = document.createElement("form");
+    const header = document.createElement("header");
+    const heading = document.createElement("h2");
+    heading.textContent = "Im Lesezeichen-Hub speichern";
+    const closeButton = document.createElement("button");
+    closeButton.className = "close";
+    closeButton.type = "button";
+    closeButton.setAttribute("aria-label", "Schliessen");
+    closeButton.textContent = "x";
+    header.append(heading, closeButton);
+
+    const groupSelect = document.createElement("select");
+    groupSelect.name = "group";
+    groupSelect.required = true;
+    groups.forEach((group, index) => {
+      const option = document.createElement("option");
+      option.value = String(group.id);
+      option.textContent = group.name;
+      option.selected = group.id === preferred || (!preferred && index === 0);
+      groupSelect.appendChild(option);
+    });
+
+    const titleInput = document.createElement("input");
+    titleInput.name = "title";
+    titleInput.value = fallbackTitle;
+    titleInput.maxLength = 120;
+    titleInput.required = true;
+
+    const notesTextarea = document.createElement("textarea");
+    notesTextarea.name = "notes";
+    notesTextarea.maxLength = 500;
+    notesTextarea.placeholder = "Optional";
+
+    const tagsInput = document.createElement("input");
+    tagsInput.name = "tags";
+    tagsInput.setAttribute("list", "hub-tag-suggestions");
+    tagsInput.placeholder = "Kommagetrennt";
+    const tagDatalist = document.createElement("datalist");
+    tagDatalist.id = "hub-tag-suggestions";
+    tagSuggestions.forEach((tag) => {
+      const option = document.createElement("option");
+      option.value = tag;
+      tagDatalist.appendChild(option);
+    });
+
+    const checks = document.createElement("div");
+    checks.className = "checks";
+    const favoriteInput = document.createElement("input");
+    favoriteInput.name = "favorite";
+    favoriteInput.type = "checkbox";
+    const pinnedInput = document.createElement("input");
+    pinnedInput.name = "pinned";
+    pinnedInput.type = "checkbox";
+    checks.append(
+      createInlineLabel(favoriteInput, "Favorit"),
+      createInlineLabel(pinnedInput, "Angepinnt"),
+    );
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const cancelButton = document.createElement("button");
+    cancelButton.className = "cancel";
+    cancelButton.type = "button";
+    cancelButton.textContent = "Abbrechen";
+    const submitButton = document.createElement("button");
+    submitButton.type = "submit";
+    submitButton.textContent = "Speichern";
+    actions.append(cancelButton, submitButton);
+
+    form.append(
+      header,
+      createFieldLabel("Gruppe", groupSelect),
+      createFieldLabel("Titel", titleInput),
+      createFieldLabel("Notiz", notesTextarea),
+      createFieldLabel("Tags", tagsInput, tagDatalist),
+      checks,
+      actions,
+    );
+    backdrop.appendChild(form);
+    shadow.append(style, backdrop);
     document.body.appendChild(host);
 
     return new Promise((resolve) => {
-      const form = shadow.querySelector("form");
       const finish = (result) => {
         document.removeEventListener("keydown", onKeyDown, true);
         host.remove();
@@ -187,9 +253,9 @@
       ["keydown", "keypress", "keyup", "beforeinput", "input", "change"].forEach((eventName) => {
         form.addEventListener(eventName, (event) => event.stopPropagation());
       });
-      shadow.querySelector(".close").addEventListener("click", () => finish(null));
-      shadow.querySelector(".cancel").addEventListener("click", () => finish(null));
-      shadow.querySelector(".backdrop").addEventListener("click", (event) => {
+      closeButton.addEventListener("click", () => finish(null));
+      cancelButton.addEventListener("click", () => finish(null));
+      backdrop.addEventListener("click", (event) => {
         if (event.target.classList.contains("backdrop")) finish(null);
       });
       form.addEventListener("submit", (event) => {
@@ -204,9 +270,21 @@
           pinned: data.get("pinned") === "on",
         });
       });
-      form.elements.title.focus();
-      form.elements.title.select();
+      titleInput.focus();
+      titleInput.select();
     });
+  }
+
+  function createFieldLabel(text, ...children) {
+    const label = document.createElement("label");
+    label.append(document.createTextNode(text), ...children);
+    return label;
+  }
+
+  function createInlineLabel(input, text) {
+    const label = document.createElement("label");
+    label.append(input, document.createTextNode(` ${text}`));
+    return label;
   }
 
   function parseTags(raw) {
@@ -218,14 +296,6 @@
       .split(",")
       .map((item) => item.trim())
       .filter((item, index, arr) => item.length > 0 && arr.indexOf(item) === index);
-  }
-
-  function escapeHTML(value) {
-    return String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
   }
 
   function isSupportedPage() {
