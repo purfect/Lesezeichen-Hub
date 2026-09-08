@@ -126,6 +126,20 @@ func (app *application) handleSilverPriceHistory(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, entries)
 }
 
+func (app *application) handleSilverPriceHistoryBounds(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+
+	var bounds silverPriceHistoryBounds
+	if err := app.db.QueryRowContext(r.Context(), `SELECT COALESCE(MIN(fetched_at), ''), COALESCE(MAX(fetched_at), '') FROM silver_price_history`).Scan(&bounds.Earliest, &bounds.Latest); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, bounds)
+}
+
 func parseHistoryDate(raw string, endOfDay bool) (time.Time, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

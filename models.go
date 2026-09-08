@@ -70,6 +70,11 @@ type silverPriceHistoryEntry struct {
 	BestProductURL  string    `json:"best_product_url"`
 }
 
+type silverPriceHistoryBounds struct {
+	Earliest string `json:"earliest"`
+	Latest   string `json:"latest"`
+}
+
 type group struct {
 	ID          int64      `json:"id"`
 	Name        string     `json:"name"`
