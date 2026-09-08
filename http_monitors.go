@@ -262,25 +262,31 @@ func (app *application) checkAndStoreHTTPMonitor(ctx context.Context, targetID, 
 
 func checkPublicHTTPURL(ctx context.Context, rawURL string) httpMonitorResult {
 	result := httpMonitorResult{CheckedAt: time.Now().UTC()}
-	target, err := publicHTTPURL(rawURL)
+	followRedirects := false
+	inspection, err := inspectHTTPURL(ctx, httpInspectRequest{
+		URL:             rawURL,
+		Method:          http.MethodGet,
+		FollowRedirects: &followRedirects,
+		IncludeHeaders:  false,
+		IncludeTLS:      false,
+	})
 	if err != nil {
 		result.Message = err.Error()
 		return result
 	}
-	started := time.Now()
-	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
-	request.Header.Set("User-Agent", "Lesezeichen-Hub-HTTP-Monitor/1.0")
-	client := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{DialContext: publicDialContext}, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(request)
-	latency := time.Since(started).Milliseconds()
+	latency := inspection.LatencyMS
 	result.LatencyMS = &latency
-	if err != nil {
-		result.Message = "Netzwerkfehler"
+	if inspection.Error != "" {
+		result.Message = inspection.Error
 		return result
 	}
-	defer response.Body.Close()
-	result.OK = response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusBadRequest
-	result.Message = fmt.Sprintf("HTTP %d", response.StatusCode)
+	if len(inspection.Hops) == 0 {
+		result.Message = "Keine HTTP-Antwort"
+		return result
+	}
+	statusCode := inspection.Hops[len(inspection.Hops)-1].Status
+	result.OK = statusCode >= http.StatusOK && statusCode < http.StatusBadRequest
+	result.Message = fmt.Sprintf("HTTP %d", statusCode)
 	return result
 }
 

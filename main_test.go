@@ -90,13 +90,23 @@ func TestPublicHTTPURL(t *testing.T) {
 	}
 }
 
-func TestRedirectInspectorRejectsLocalURL(t *testing.T) {
-	response, err := inspectRedirects(context.Background(), "http://127.0.0.1:3000", true)
+func TestHTTPInspectRejectsLocalURL(t *testing.T) {
+	response, err := inspectHTTPURL(context.Background(), httpInspectRequest{URL: "http://127.0.0.1:3000", Method: http.MethodHead})
 	if err == nil {
-		t.Fatalf("inspectRedirects allowed local URL: %#v", response)
+		t.Fatalf("inspectHTTPURL allowed local URL: %#v", response)
 	}
 	if !strings.Contains(err.Error(), "lokale und private netzadressen") {
 		t.Fatalf("error = %q, want local network rejection", err.Error())
+	}
+}
+
+func TestHTTPInspectRejectsUnsafeMethod(t *testing.T) {
+	response, err := inspectHTTPURL(context.Background(), httpInspectRequest{URL: "https://example.com", Method: http.MethodPost})
+	if err == nil {
+		t.Fatalf("inspectHTTPURL allowed unsafe method: %#v", response)
+	}
+	if !strings.Contains(err.Error(), "GET und HEAD") {
+		t.Fatalf("error = %q, want method rejection", err.Error())
 	}
 }
 

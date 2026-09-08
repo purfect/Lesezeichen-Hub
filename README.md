@@ -217,6 +217,7 @@ Die Update-Installation funktioniert nur unter Windows aus einer laufenden `.exe
 - DELETE /api/modules/{id}
 - GET /api/module-catalog
 - POST /api/module-catalog/{repository}/install
+- POST /api/http/inspect
 - GET /api/silver-price-history
 
 Wiederherstellungen werden vor dem Einspielen mit `POST /api/restore?preview=1` geprüft. Der Assistent erstellt auf Wunsch zuerst eine neue Vollsicherung und unterstützt die Konfliktstrategien `overwrite` und `skip`.
