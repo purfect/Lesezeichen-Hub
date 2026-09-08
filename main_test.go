@@ -1087,6 +1087,10 @@ func TestModuleCatalogFallsBackWhenGithubRateLimitIsExhausted(t *testing.T) {
 		case r.URL.Path == "/orgs/Lesezeichen-Hub/repositories":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write([]byte(`<a href="/Lesezeichen-Hub/.github">.github</a><a href="/Lesezeichen-Hub/Gorilla">Gorilla</a><a href="/Lesezeichen-Hub/NAT_Rechner">NAT Rechner</a>`))
+		case r.URL.Path == "/Lesezeichen-Hub/Gorilla":
+			_, _ = w.Write([]byte(`<a href="/topics/spiel">spiel</a><a href="/Lesezeichen-Hub/Gorilla/commits/main/">Commits</a>`))
+		case r.URL.Path == "/Lesezeichen-Hub/NAT_Rechner":
+			_, _ = w.Write([]byte(`<a href="/topics/werkzeug">werkzeug</a><a href="/Lesezeichen-Hub/NAT_Rechner/commits/master/">Commits</a>`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -1101,10 +1105,10 @@ func TestModuleCatalogFallsBackWhenGithubRateLimitIsExhausted(t *testing.T) {
 	if len(modules) != 2 {
 		t.Fatalf("modules = %+v, want 2 entries", modules)
 	}
-	if !modules[0].Installed || modules[0].Name != "Gorilla" {
+	if !modules[0].Installed || modules[0].Name != "Gorilla" || modules[0].Category != "Spiele" {
 		t.Fatalf("installed module = %+v", modules[0])
 	}
-	if modules[1].Name != "NAT_Rechner" || modules[1].DefaultBranch != "main" {
+	if modules[1].Name != "NAT_Rechner" || modules[1].Category != "Werkzeuge" || modules[1].DefaultBranch != "master" {
 		t.Fatalf("fallback module = %+v", modules[1])
 	}
 }
@@ -1121,7 +1125,7 @@ func TestModuleCatalogReadsOptionalVersionManifest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/orgs/Lesezeichen-Hub/repos":
-			writeJSON(w, http.StatusOK, []githubRepository{{Name: "ansible-vault-encryption", DefaultBranch: "main"}})
+			writeJSON(w, http.StatusOK, []githubRepository{{Name: "ansible-vault-encryption", Topics: []string{"werkzeug"}, DefaultBranch: "main"}})
 		case "/Lesezeichen-Hub/ansible-vault-encryption/main/version.json":
 			writeJSON(w, http.StatusOK, moduleVersionManifest{Version: "1.1.0"})
 		default:
@@ -1135,8 +1139,26 @@ func TestModuleCatalogReadsOptionalVersionManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(modules) != 1 || modules[0].Version != "1.1.0" || modules[0].InstalledVersion != "1.0.0" || !modules[0].UpdateAvailable {
+	if len(modules) != 1 || modules[0].Category != "Werkzeuge" || modules[0].Version != "1.1.0" || modules[0].InstalledVersion != "1.0.0" || !modules[0].UpdateAvailable {
 		t.Fatalf("modules = %+v, want available update from manifest", modules)
+	}
+}
+
+func TestCatalogModuleCategory(t *testing.T) {
+	tests := []struct {
+		topics []string
+		want   string
+	}{
+		{[]string{"spiel"}, "Spiele"},
+		{[]string{" Werkzeug "}, "Werkzeuge"},
+		{[]string{"werkzeug", "spiel"}, "Spiele"},
+		{[]string{"archiv"}, "Sonstiges"},
+		{nil, "Sonstiges"},
+	}
+	for _, test := range tests {
+		if got := catalogModuleCategory(test.topics); got != test.want {
+			t.Errorf("catalogModuleCategory(%q) = %q, want %q", test.topics, got, test.want)
+		}
 	}
 }
 

@@ -275,6 +275,7 @@ func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule
 		}
 		module := catalogModule{
 			Name:          repository.Name,
+			Category:      catalogModuleCategory(repository.Topics),
 			Description:   repository.Description,
 			RepositoryURL: repository.HTMLURL,
 			DefaultBranch: repository.DefaultBranch,
@@ -291,6 +292,20 @@ func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule
 	}
 	sort.Slice(modules, func(i, j int) bool { return strings.ToLower(modules[i].Name) < strings.ToLower(modules[j].Name) })
 	return modules, nil
+}
+
+func catalogModuleCategory(topics []string) string {
+	for _, topic := range topics {
+		if strings.EqualFold(strings.TrimSpace(topic), "spiel") {
+			return "Spiele"
+		}
+	}
+	for _, topic := range topics {
+		if strings.EqualFold(strings.TrimSpace(topic), "werkzeug") {
+			return "Werkzeuge"
+		}
+	}
+	return "Sonstiges"
 }
 
 func (app *application) fetchModuleVersion(ctx context.Context, repository, branch string) string {
@@ -359,7 +374,50 @@ func (app *application) fetchModuleRepositoriesFromWeb(ctx context.Context) ([]g
 	if len(repositories) == 0 {
 		return nil, fmt.Errorf("keine Repositorys gefunden")
 	}
+	for index := range repositories {
+		topics, defaultBranch := app.fetchModuleDetailsFromWeb(ctx, repositories[index].HTMLURL)
+		repositories[index].Topics = topics
+		if defaultBranch != "" {
+			repositories[index].DefaultBranch = defaultBranch
+		}
+	}
 	return repositories, nil
+}
+
+func (app *application) fetchModuleDetailsFromWeb(ctx context.Context, repositoryURL string) ([]string, string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repositoryURL, nil)
+	if err != nil {
+		return nil, ""
+	}
+	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil || response.StatusCode != http.StatusOK {
+		if response != nil {
+			response.Body.Close()
+		}
+		return nil, ""
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return nil, ""
+	}
+	pattern := regexp.MustCompile(`href="/topics/([A-Za-z0-9-]+)"`)
+	seen := make(map[string]bool)
+	topics := make([]string, 0)
+	for _, match := range pattern.FindAllSubmatch(body, -1) {
+		topic := strings.ToLower(string(match[1]))
+		if !seen[topic] {
+			seen[topic] = true
+			topics = append(topics, topic)
+		}
+	}
+	branchPattern := regexp.MustCompile(`href="/` + regexp.QuoteMeta(moduleGithubOwner) + `/[A-Za-z0-9_.-]+/commits/([A-Za-z0-9._/-]+?)/?"`)
+	branchMatch := branchPattern.FindSubmatch(body)
+	if len(branchMatch) < 2 {
+		return topics, ""
+	}
+	return topics, string(branchMatch[1])
 }
 
 func (app *application) installCatalogModule(ctx context.Context, repositoryName string) (catalogModule, error) {
