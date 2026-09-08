@@ -80,6 +80,7 @@ func main() {
 	mux.HandleFunc("/api/metal-prices", app.handleMetalPrices)
 	mux.HandleFunc("/api/silver-prices", app.handleSilverPrices)
 	mux.HandleFunc("/api/silver-price-history", app.handleSilverPriceHistory)
+	mux.HandleFunc("/api/silver-price-history-bounds", app.handleSilverPriceHistoryBounds)
 	mux.HandleFunc("/api/http-monitors", app.handleHTTPMonitors)
 	mux.HandleFunc("/api/http-monitors/", app.handleHTTPMonitorRoutes)
 	mux.HandleFunc("/api/http-monitor-results", app.handleHTTPMonitorResults)

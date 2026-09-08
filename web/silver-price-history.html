@@ -21,12 +21,18 @@
     .history-periods { display: inline-flex; flex-wrap: wrap; gap: 4px; }
     .history-periods button, .history-custom button { min-height: 36px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; color: var(--ink); background: rgba(20, 34, 51, 0.9); font: inherit; }
     .history-periods button[aria-pressed="true"], .history-custom button { border-color: rgba(76, 219, 194, 0.68); background: rgba(22, 74, 72, 0.72); color: #dffbf6; }
+    .history-navigation { display: inline-flex; align-items: center; gap: 4px; }
+    .history-navigation button { width: 36px; min-height: 36px; border: 1px solid var(--line); border-radius: 6px; padding: 0; color: var(--ink); background: rgba(20, 34, 51, 0.9); font: inherit; font-size: 1.25rem; }
+    .history-navigation button:disabled { cursor: not-allowed; opacity: 0.45; }
+    #history-today { width: auto; padding: 0 10px; font-size: inherit; }
+    .history-range-label { min-width: 148px; color: var(--muted); font-size: 0.85rem; text-align: center; }
     .history-custom { display: none; align-items: end; flex-wrap: wrap; gap: 8px; }
     .history-custom.visible { display: flex; }
     .history-custom label { display: grid; gap: 4px; color: var(--muted); font-size: 0.8rem; }
     .history-custom input { min-height: 36px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; background: rgba(17, 29, 45, 0.9); color: var(--ink); font: inherit; }
-    .history-chart-wrap { height: min(52vw, 430px); min-height: 260px; border: 1px solid rgba(147, 170, 201, 0.2); background: rgba(17, 29, 45, 0.7); }
+    .history-chart-wrap { height: min(52vw, 430px); min-height: 260px; position: relative; border: 1px solid rgba(147, 170, 201, 0.2); background: rgba(17, 29, 45, 0.7); }
     #history-chart { display: block; width: 100%; height: 100%; }
+    .history-tooltip { display: none; position: absolute; z-index: 1; max-width: 240px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: rgba(8, 16, 28, 0.96); color: var(--ink); font-size: 0.82rem; line-height: 1.45; pointer-events: none; white-space: pre-line; transform: translate(-50%, calc(-100% - 12px)); }
     :root[data-theme="terminal"] .history-panel { border-radius: 0; background: #000; box-shadow: none; }
     :root[data-theme="terminal"] .history-chart-wrap { border-color: rgba(237, 237, 237, 0.2); background: #000; }
     :root[data-theme="terminal"] .history-legend-silver { background: #8cff3b !important; }
@@ -66,13 +72,19 @@
           <button type="button" data-period="year" aria-pressed="false">Jahr</button>
           <button type="button" data-period="custom" aria-pressed="false">Benutzerdefiniert</button>
         </div>
+        <div class="history-navigation" aria-label="Zeitraum verschieben">
+          <button id="history-previous" type="button" aria-label="Vorheriger Zeitraum" title="Vorheriger Zeitraum">&larr;</button>
+          <span id="history-range-label" class="history-range-label" aria-live="polite"></span>
+          <button id="history-next" type="button" aria-label="Nächster Zeitraum" title="Nächster Zeitraum">&rarr;</button>
+          <button id="history-today" type="button" title="Zum heutigen Zeitraum springen">Heute</button>
+        </div>
         <div id="history-custom" class="history-custom">
           <label>Von<input id="history-from" type="date" /></label>
           <label>Bis<input id="history-to" type="date" /></label>
           <button id="history-apply" type="button">Anwenden</button>
         </div>
       </div>
-      <div class="history-chart-wrap"><canvas id="history-chart" aria-label="Diagramm der Silberpreisentwicklung" role="img"></canvas></div>
+      <div class="history-chart-wrap"><canvas id="history-chart" aria-label="Diagramm der Silberpreisentwicklung" role="img"></canvas><div id="history-tooltip" class="history-tooltip" role="status"></div></div>
       <div id="history-summary" class="history-summary"></div>
       <p id="history-status" class="history-status">Lade gespeicherte Preisstände...</p>
     </section>
@@ -89,7 +101,15 @@
     const customControls = document.getElementById('history-custom');
     const fromInput = document.getElementById('history-from');
     const toInput = document.getElementById('history-to');
+    const previousButton = document.getElementById('history-previous');
+    const nextButton = document.getElementById('history-next');
+    const todayButton = document.getElementById('history-today');
+    const rangeLabel = document.getElementById('history-range-label');
+    const chartTooltip = document.getElementById('history-tooltip');
     let entries = [];
+    let historyBounds = { earliest: null, latest: null };
+    let activePeriod = 'month';
+    let activeRange = rangeForPeriod(activePeriod);
 
     function dateValue(date) { return date.toLocaleDateString('en-CA'); }
 
@@ -102,7 +122,40 @@
       return { from: dateValue(from), to: dateValue(today) };
     }
 
-    async function loadHistory(range = rangeForPeriod('month'), refreshPrice = false) {
+    function dateFromValue(value) { return new Date(`${value}T00:00:00`); }
+
+    function shiftRange(range, period, direction) {
+      const from = dateFromValue(range.from);
+      const to = dateFromValue(range.to);
+      const amount = direction === 'previous' ? -1 : 1;
+      if (period === 'day') { from.setDate(from.getDate() + amount); to.setDate(to.getDate() + amount); }
+      if (period === 'week') { from.setDate(from.getDate() + amount * 7); to.setDate(to.getDate() + amount * 7); }
+      if (period === 'month') { from.setMonth(from.getMonth() + amount); to.setMonth(to.getMonth() + amount); }
+      if (period === 'year') { from.setFullYear(from.getFullYear() + amount); to.setFullYear(to.getFullYear() + amount); }
+      return { from: dateValue(from), to: dateValue(to) };
+    }
+
+    function updateNavigation() {
+      const isCustom = activePeriod === 'custom';
+      const today = dateValue(new Date());
+      previousButton.disabled = isCustom || (historyBounds.earliest && activeRange.from <= historyBounds.earliest);
+      nextButton.disabled = isCustom || activeRange.to >= today;
+      todayButton.disabled = isCustom || activeRange.to >= today;
+      rangeLabel.textContent = isCustom ? '' : `${new Date(`${activeRange.from}T00:00:00`).toLocaleDateString('de-DE')} bis ${new Date(`${activeRange.to}T00:00:00`).toLocaleDateString('de-DE')}`;
+    }
+
+    async function loadHistoryBounds() {
+      try {
+        const response = await fetch('/api/silver-price-history-bounds', { cache: 'no-store' });
+        if (!response.ok) throw new Error();
+        historyBounds = await response.json();
+        historyBounds.earliest = historyBounds.earliest ? dateValue(new Date(historyBounds.earliest)) : null;
+        historyBounds.latest = historyBounds.latest ? dateValue(new Date(historyBounds.latest)) : null;
+      } catch (_) { historyBounds = { earliest: null, latest: null }; }
+      updateNavigation();
+    }
+
+    async function loadHistory(range = activeRange, refreshPrice = false) {
       if (refreshPrice) try { await fetch('/api/metal-prices', { cache: 'no-store' }); } catch (_) { /* Historie bleibt auch ohne neue Abfrage sichtbar. */ }
       try {
         const search = new URLSearchParams(range).toString();
@@ -153,24 +206,78 @@
         context.strokeStyle = line.color; context.lineWidth = 2.5; context.beginPath(); values.forEach((value, index) => { const p = point(value, index); index ? context.lineTo(p.x, p.y) : context.moveTo(p.x, p.y); }); context.stroke();
         context.fillStyle = line.color; values.forEach((value, index) => { const p = point(value, index); context.beginPath(); context.arc(p.x, p.y, 3, 0, Math.PI * 2); context.fill(); });
       });
-      context.fillStyle = labelColor; context.textAlign = 'left'; context.fillText(new Date(entries[0].fetched_at).toLocaleDateString('de-DE'), pad.left, height - 14); context.textAlign = 'right'; context.fillText(new Date(entries.at(-1).fetched_at).toLocaleDateString('de-DE'), width - pad.right, height - 14);
+      context.fillStyle = labelColor;
+      const labelCount = Math.min(6, entries.length);
+      const labelIndexes = [...new Set(Array.from({ length: labelCount }, (_, index) => Math.round(index * (entries.length - 1) / Math.max(labelCount - 1, 1))))];
+      const hasMultipleDays = new Set(entries.map((entry) => new Date(entry.fetched_at).toLocaleDateString('de-DE'))).size > 1;
+      const hasDuplicateMinutes = new Set(entries.map((entry) => new Date(entry.fetched_at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }))).size < entries.length;
+      labelIndexes.forEach((index) => {
+        const x = pad.left + (entries.length === 1 ? plotWidth / 2 : index * plotWidth / (entries.length - 1));
+        context.textAlign = index === 0 ? 'left' : index === entries.length - 1 ? 'right' : 'center';
+        const timestamp = new Date(entries[index].fetched_at);
+        const label = hasMultipleDays ? timestamp.toLocaleDateString('de-DE') : timestamp.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: hasDuplicateMinutes ? '2-digit' : undefined });
+        context.fillText(label, x, height - 14);
+      });
+    }
+
+    function showTooltip(event) {
+      if (!entries.length) return;
+      const rect = chart.getBoundingClientRect();
+      const pad = { left: 58, right: 58 };
+      const plotWidth = rect.width - pad.left - pad.right;
+      const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left - pad.left) / plotWidth));
+      const index = entries.length === 1 ? 0 : Math.round(ratio * (entries.length - 1));
+      const entry = entries[index];
+      const x = pad.left + (entries.length === 1 ? plotWidth / 2 : index * plotWidth / (entries.length - 1));
+      chartTooltip.textContent = `${new Date(entry.fetched_at).toLocaleString('de-DE')}\nSilber: ${currency.format(entry.eur_per_g)} €/g\nTop 1oz: ${currency.format(entry.best_eur_per_ounce)} €${entry.best_product_name ? `\n${entry.best_product_name}` : ''}`;
+      chartTooltip.style.left = `${Math.max(110, Math.min(rect.width - 110, x))}px`;
+      chartTooltip.style.top = `${Math.max(48, event.clientY - rect.top)}px`;
+      chartTooltip.style.display = 'block';
     }
     periodButtons.forEach((button) => button.addEventListener('click', () => {
       const period = button.dataset.period;
+      activePeriod = period;
       periodButtons.forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
       customControls.classList.toggle('visible', period === 'custom');
-      if (period !== 'custom') loadHistory(rangeForPeriod(period));
+      if (period !== 'custom') {
+        activeRange = rangeForPeriod(period);
+        updateNavigation();
+        loadHistory();
+      } else {
+        updateNavigation();
+      }
     }));
     document.getElementById('history-apply').addEventListener('click', () => {
       if (!fromInput.value || !toInput.value) { status.textContent = 'Bitte Start- und Enddatum auswählen.'; return; }
-      loadHistory({ from: fromInput.value, to: toInput.value });
+      activePeriod = 'custom';
+      activeRange = { from: fromInput.value, to: toInput.value };
+      updateNavigation();
+      loadHistory();
     });
-    const initialRange = rangeForPeriod('month');
-    fromInput.value = initialRange.from; toInput.value = initialRange.to;
+    previousButton.addEventListener('click', () => {
+      activeRange = shiftRange(activeRange, activePeriod, 'previous');
+      updateNavigation();
+      loadHistory();
+    });
+    nextButton.addEventListener('click', () => {
+      activeRange = shiftRange(activeRange, activePeriod, 'next');
+      updateNavigation();
+      loadHistory();
+    });
+    todayButton.addEventListener('click', () => {
+      activeRange = rangeForPeriod(activePeriod);
+      updateNavigation();
+      loadHistory();
+    });
+    chart.addEventListener('mousemove', showTooltip);
+    chart.addEventListener('mouseleave', () => { chartTooltip.style.display = 'none'; });
+    fromInput.value = activeRange.from; toInput.value = activeRange.to;
     window.addEventListener('lesezeichen-theme-change', drawChart);
     window.addEventListener('resize', drawChart);
     drawChart();
-    loadHistory(initialRange, true);
+    updateNavigation();
+    loadHistoryBounds();
+    loadHistory(activeRange, true);
   </script>
 </body>
 </html>

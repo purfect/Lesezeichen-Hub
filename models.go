@@ -70,6 +70,11 @@ type silverPriceHistoryEntry struct {
 	BestProductURL  string    `json:"best_product_url"`
 }
 
+type silverPriceHistoryBounds struct {
+	Earliest string `json:"earliest"`
+	Latest   string `json:"latest"`
+}
+
 type group struct {
 	ID          int64      `json:"id"`
 	Name        string     `json:"name"`
@@ -122,6 +127,7 @@ type localModule struct {
 
 type catalogModule struct {
 	Name             string `json:"name"`
+	Category         string `json:"category"`
 	Description      string `json:"description"`
 	RepositoryURL    string `json:"repository_url"`
 	DefaultBranch    string `json:"default_branch"`
@@ -134,12 +140,13 @@ type catalogModule struct {
 }
 
 type githubRepository struct {
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	HTMLURL       string `json:"html_url"`
-	DefaultBranch string `json:"default_branch"`
-	Archived      bool   `json:"archived"`
-	Fork          bool   `json:"fork"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description"`
+	Topics        []string `json:"topics"`
+	HTMLURL       string   `json:"html_url"`
+	DefaultBranch string   `json:"default_branch"`
+	Archived      bool     `json:"archived"`
+	Fork          bool     `json:"fork"`
 }
 
 type apiError struct {

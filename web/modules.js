@@ -86,7 +86,24 @@ function renderCatalog(modules) {
     return;
   }
 
-  for (const module of modules) {
+  const categories = ["Spiele", "Werkzeuge", "Sonstiges"];
+  for (const category of categories) {
+    const categoryModules = modules.filter((module) => module.category === category);
+    if (!categoryModules.length) continue;
+    const group = document.createElement("section");
+    group.className = "catalog-group";
+    const title = document.createElement("h3");
+    title.className = "catalog-group-title";
+    title.textContent = category;
+    const cards = document.createElement("div");
+    cards.className = "catalog-group-cards";
+    categoryModules.forEach((module) => cards.appendChild(createCatalogCard(module)));
+    group.append(title, cards);
+    els.catalogList.appendChild(group);
+  }
+}
+
+function createCatalogCard(module) {
     const card = document.createElement("article");
     card.className = `catalog-module ${module.installed ? "is-installed" : ""} ${module.update_available ? "has-update" : ""}`;
     card.innerHTML = `
@@ -131,8 +148,7 @@ function renderCatalog(modules) {
         setStatus(error.message || "Modul konnte nicht aktualisiert werden.", true);
       }
     });
-    els.catalogList.appendChild(card);
-  }
+    return card;
 }
 
 function renderModules(modules) {

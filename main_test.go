@@ -355,6 +355,34 @@ func TestSilverPriceHistoryFiltersByDateRange(t *testing.T) {
 	}
 }
 
+func TestSilverPriceHistoryBoundsReturnsFirstAndLastEntry(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, fetchedAt := range []string{"2026-08-01T12:00:00Z", "2026-09-07T12:00:00Z"} {
+		if _, err := db.Exec(`INSERT INTO silver_price_history (fetched_at, eur_per_g, best_eur_per_ounce) VALUES (?, ?, ?)`, fetchedAt, 1.23, 38.45); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	app := &application{db: db}
+	request := httptest.NewRequest(http.MethodGet, "/api/silver-price-history-bounds", nil)
+	response := httptest.NewRecorder()
+	app.handleSilverPriceHistoryBounds(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var bounds silverPriceHistoryBounds
+	if err := json.NewDecoder(response.Body).Decode(&bounds); err != nil {
+		t.Fatal(err)
+	}
+	if bounds.Earliest != "2026-08-01T12:00:00Z" || bounds.Latest != "2026-09-07T12:00:00Z" {
+		t.Fatalf("bounds = %#v, want ersten und letzten gespeicherten Messpunkt", bounds)
+	}
+}
+
 func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
@@ -373,7 +401,7 @@ func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 	bookmarkID, _ := result.LastInsertId()
 
 	app := &application{db: db}
-	duplicate, err := app.findDuplicateBookmark(context.Background(), "HTTPS://EXAMPLE.COM:443/path/#section", 0)
+	duplicate, err := app.findDuplicateBookmark(context.Background(), groupID, "HTTPS://EXAMPLE.COM:443/path/#section", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +415,7 @@ func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 		"https://example.com/path#other-section",
 	}
 	for _, distinctURL := range distinctURLs {
-		duplicate, err = app.findDuplicateBookmark(context.Background(), distinctURL, 0)
+		duplicate, err = app.findDuplicateBookmark(context.Background(), groupID, distinctURL, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -396,12 +424,60 @@ func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 		}
 	}
 
-	duplicate, err = app.findDuplicateBookmark(context.Background(), "https://example.com/path#section", bookmarkID)
+	duplicate, err = app.findDuplicateBookmark(context.Background(), groupID, "https://example.com/path#section", bookmarkID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if duplicate != "" {
 		t.Errorf("bearbeitetes Lesezeichen wurde als eigenes Duplikat erkannt: %s", duplicate)
+	}
+
+	otherGroup, err := db.Exec(`INSERT INTO groups(name) VALUES('Privat')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGroupID, _ := otherGroup.LastInsertId()
+	duplicate, err = app.findDuplicateBookmark(context.Background(), otherGroupID, "https://example.com/path#section", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate != "" {
+		t.Errorf("URL aus einer anderen Gruppe wurde als Duplikat erkannt: %s", duplicate)
+	}
+}
+
+func TestUpdateBookmarkAllowsAddingTagsToExistingBookmark(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	group, err := db.Exec(`INSERT INTO groups(name) VALUES('Themen')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupID, _ := group.LastInsertId()
+	bookmark, err := db.Exec(`INSERT INTO bookmarks(group_id, title, url, tags) VALUES(?, ?, ?, ?)`, groupID, "EKS Cluster", "https://jira.example.com/browse/BTRTMMS-144", "alt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bookmarkID, _ := bookmark.LastInsertId()
+
+	app := &application{db: db}
+	body := strings.NewReader(`{"group_id":` + strconv.FormatInt(groupID, 10) + `,"title":"EKS Cluster","url":"https://jira.example.com/browse/BTRTMMS-144","notes":"","tags":["alt","neu"],"favorite":false,"pinned":false,"archived":false,"sort_order":0,"remind_at":""}`)
+	request := httptest.NewRequest(http.MethodPut, "/api/bookmarks/"+strconv.FormatInt(bookmarkID, 10), body)
+	response := httptest.NewRecorder()
+	app.handleBookmarkRoutes(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var tags string
+	if err := db.QueryRow(`SELECT tags FROM bookmarks WHERE id = ?`, bookmarkID).Scan(&tags); err != nil {
+		t.Fatal(err)
+	}
+	if tags != "alt,neu" {
+		t.Fatalf("tags = %q, want %q", tags, "alt,neu")
 	}
 }
 
@@ -1011,6 +1087,10 @@ func TestModuleCatalogFallsBackWhenGithubRateLimitIsExhausted(t *testing.T) {
 		case r.URL.Path == "/orgs/Lesezeichen-Hub/repositories":
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write([]byte(`<a href="/Lesezeichen-Hub/.github">.github</a><a href="/Lesezeichen-Hub/Gorilla">Gorilla</a><a href="/Lesezeichen-Hub/NAT_Rechner">NAT Rechner</a>`))
+		case r.URL.Path == "/Lesezeichen-Hub/Gorilla":
+			_, _ = w.Write([]byte(`<a href="/topics/spiel">spiel</a><a href="/Lesezeichen-Hub/Gorilla/commits/main/">Commits</a>`))
+		case r.URL.Path == "/Lesezeichen-Hub/NAT_Rechner":
+			_, _ = w.Write([]byte(`<a href="/topics/werkzeug">werkzeug</a><a href="/Lesezeichen-Hub/NAT_Rechner/commits/master/">Commits</a>`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -1025,10 +1105,10 @@ func TestModuleCatalogFallsBackWhenGithubRateLimitIsExhausted(t *testing.T) {
 	if len(modules) != 2 {
 		t.Fatalf("modules = %+v, want 2 entries", modules)
 	}
-	if !modules[0].Installed || modules[0].Name != "Gorilla" {
+	if !modules[0].Installed || modules[0].Name != "Gorilla" || modules[0].Category != "Spiele" {
 		t.Fatalf("installed module = %+v", modules[0])
 	}
-	if modules[1].Name != "NAT_Rechner" || modules[1].DefaultBranch != "main" {
+	if modules[1].Name != "NAT_Rechner" || modules[1].Category != "Werkzeuge" || modules[1].DefaultBranch != "master" {
 		t.Fatalf("fallback module = %+v", modules[1])
 	}
 }
@@ -1045,7 +1125,7 @@ func TestModuleCatalogReadsOptionalVersionManifest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/orgs/Lesezeichen-Hub/repos":
-			writeJSON(w, http.StatusOK, []githubRepository{{Name: "ansible-vault-encryption", DefaultBranch: "main"}})
+			writeJSON(w, http.StatusOK, []githubRepository{{Name: "ansible-vault-encryption", Topics: []string{"werkzeug"}, DefaultBranch: "main"}})
 		case "/Lesezeichen-Hub/ansible-vault-encryption/main/version.json":
 			writeJSON(w, http.StatusOK, moduleVersionManifest{Version: "1.1.0"})
 		default:
@@ -1059,8 +1139,55 @@ func TestModuleCatalogReadsOptionalVersionManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(modules) != 1 || modules[0].Version != "1.1.0" || modules[0].InstalledVersion != "1.0.0" || !modules[0].UpdateAvailable {
+	if len(modules) != 1 || modules[0].Category != "Werkzeuge" || modules[0].Version != "1.1.0" || modules[0].InstalledVersion != "1.0.0" || !modules[0].UpdateAvailable {
 		t.Fatalf("modules = %+v, want available update from manifest", modules)
+	}
+}
+
+func TestCatalogModuleCategory(t *testing.T) {
+	tests := []struct {
+		topics []string
+		want   string
+	}{
+		{[]string{"spiel"}, "Spiele"},
+		{[]string{" Werkzeug "}, "Werkzeuge"},
+		{[]string{"werkzeug", "spiel"}, "Spiele"},
+		{[]string{"archiv"}, "Sonstiges"},
+		{nil, "Sonstiges"},
+	}
+	for _, test := range tests {
+		if got := catalogModuleCategory(test.topics); got != test.want {
+			t.Errorf("catalogModuleCategory(%q) = %q, want %q", test.topics, got, test.want)
+		}
+	}
+}
+
+func TestCatalogIncludesForkedOrganizationModule(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/orgs/Lesezeichen-Hub/repos" {
+			writeJSON(w, http.StatusOK, []githubRepository{{Name: "hextris", Topics: []string{"spiel"}, DefaultBranch: "gh-pages", Fork: true}})
+			return
+		}
+		if r.URL.Path == "/Lesezeichen-Hub/hextris/gh-pages/version.json" {
+			writeJSON(w, http.StatusOK, moduleVersionManifest{Version: "1.0.0"})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	app := &application{db: db, moduleAPIBase: server.URL, moduleManifestBase: server.URL}
+	modules, err := app.fetchModuleCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modules) != 1 || modules[0].Name != "hextris" || modules[0].Category != "Spiele" || modules[0].DefaultBranch != "gh-pages" {
+		t.Fatalf("modules = %+v, want forked organization module", modules)
 	}
 }
 
