@@ -90,6 +90,16 @@ func TestPublicHTTPURL(t *testing.T) {
 	}
 }
 
+func TestRedirectInspectorRejectsLocalURL(t *testing.T) {
+	response, err := inspectRedirects(context.Background(), "http://127.0.0.1:3000", true)
+	if err == nil {
+		t.Fatalf("inspectRedirects allowed local URL: %#v", response)
+	}
+	if !strings.Contains(err.Error(), "lokale und private netzadressen") {
+		t.Fatalf("error = %q, want local network rejection", err.Error())
+	}
+}
+
 func TestHTTPMonitorTargetsAreScopedToModule(t *testing.T) {
 	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {

@@ -84,6 +84,7 @@ func main() {
 	mux.HandleFunc("/api/http-monitors", app.handleHTTPMonitors)
 	mux.HandleFunc("/api/http-monitors/", app.handleHTTPMonitorRoutes)
 	mux.HandleFunc("/api/http-monitor-results", app.handleHTTPMonitorResults)
+	mux.HandleFunc("/api/redirect-inspector", app.handleRedirectInspector)
 	mux.HandleFunc("/silver-preise", app.handleSilverPricesPage)
 	mux.HandleFunc("/silberpreis-verlauf", app.handleSilverPriceHistoryPage)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(webFS))))
