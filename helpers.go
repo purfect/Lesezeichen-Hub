@@ -124,10 +124,10 @@ func safeModuleDirectoryName(name string) string {
 func (app *application) findDuplicateBookmark(ctx context.Context, rawURL string, excludeID int64) (string, error) {
 	targetURL := normalizeBookmarkURL(rawURL)
 	rows, err := app.db.QueryContext(ctx, `
-		SELECT bookmarks.id, bookmarks.title, bookmarks.url, groups.name
+		SELECT bookmarks.id, bookmarks.title, bookmarks.url, COALESCE(groups.name, ?)
 		FROM bookmarks
-		JOIN groups ON groups.id = bookmarks.group_id
-		WHERE bookmarks.id != ?`, excludeID)
+		LEFT JOIN groups ON groups.id = bookmarks.group_id
+		WHERE bookmarks.id != ?`, unsortedGroupName, excludeID)
 	if err != nil {
 		return "", err
 	}

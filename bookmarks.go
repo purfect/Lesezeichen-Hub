@@ -13,6 +13,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const unsortedGroupName = "Unsortiert"
+
 func (app *application) handleGroups(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -157,7 +159,19 @@ func (app *application) handleGroupRoutes(w http.ResponseWriter, r *http.Request
 
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	case http.MethodDelete:
-		res, err := app.db.ExecContext(r.Context(), `DELETE FROM groups WHERE id = ?`, groupID)
+		tx, err := app.db.BeginTx(r.Context(), nil)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer tx.Rollback()
+
+		if _, err := tx.ExecContext(r.Context(), `UPDATE bookmarks SET group_id = NULL WHERE group_id = ?`, groupID); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		res, err := tx.ExecContext(r.Context(), `DELETE FROM groups WHERE id = ?`, groupID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
@@ -165,6 +179,10 @@ func (app *application) handleGroupRoutes(w http.ResponseWriter, r *http.Request
 		affected, _ := res.RowsAffected()
 		if affected == 0 {
 			writeErr(w, http.StatusNotFound, fmt.Errorf("gruppe nicht gefunden"))
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
 
@@ -299,10 +317,6 @@ func (app *application) handleBookmarkRoutes(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		if payload.GroupID <= 0 {
-			writeErr(w, http.StatusBadRequest, fmt.Errorf("group_id ist erforderlich"))
-			return
-		}
 		title := strings.TrimSpace(payload.Title)
 		if title == "" {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("title ist erforderlich"))
@@ -331,7 +345,7 @@ func (app *application) handleBookmarkRoutes(w http.ResponseWriter, r *http.Requ
 			`UPDATE bookmarks
 			 SET group_id = ?, title = ?, url = ?, notes = ?, tags = ?, favorite = ?, pinned = ?, archived = ?, sort_order = ?, remind_at = ?, updated_at = CURRENT_TIMESTAMP
 			 WHERE id = ?`,
-			payload.GroupID,
+			nullableGroupID(payload.GroupID),
 			title,
 			urlValue,
 			strings.TrimSpace(payload.Notes),
@@ -407,7 +421,13 @@ func (app *application) reorderBookmarksInGroup(w http.ResponseWriter, r *http.R
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltige bookmark-id"))
 			return
 		}
-		if _, err := app.db.ExecContext(r.Context(), `UPDATE bookmarks SET sort_order = ? WHERE id = ? AND group_id = ?`, i, id, groupID); err != nil {
+		var err error
+		if groupID == 0 {
+			_, err = app.db.ExecContext(r.Context(), `UPDATE bookmarks SET sort_order = ? WHERE id = ? AND group_id IS NULL`, i, id)
+		} else {
+			_, err = app.db.ExecContext(r.Context(), `UPDATE bookmarks SET sort_order = ? WHERE id = ? AND group_id = ?`, i, id, groupID)
+		}
+		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -417,12 +437,15 @@ func (app *application) reorderBookmarksInGroup(w http.ResponseWriter, r *http.R
 }
 
 func (app *application) listBookmarksByGroup(w http.ResponseWriter, r *http.Request, groupID int64) {
-	rows, err := app.db.QueryContext(
-		r.Context(),
-		`SELECT id, group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at, open_count, last_opened_at, created_at, updated_at
-		 FROM bookmarks WHERE group_id = ? ORDER BY pinned DESC, sort_order ASC, id ASC`,
-		groupID,
-	)
+	query := `SELECT id, group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at, open_count, last_opened_at, created_at, updated_at
+		 FROM bookmarks WHERE group_id = ? ORDER BY pinned DESC, sort_order ASC, id ASC`
+	args := []any{groupID}
+	if groupID == 0 {
+		query = `SELECT id, group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at, open_count, last_opened_at, created_at, updated_at
+		 FROM bookmarks WHERE group_id IS NULL ORDER BY pinned DESC, sort_order ASC, id ASC`
+		args = nil
+	}
+	rows, err := app.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -431,19 +454,11 @@ func (app *application) listBookmarksByGroup(w http.ResponseWriter, r *http.Requ
 
 	items := make([]bookmark, 0)
 	for rows.Next() {
-		var b bookmark
-		var tagsRaw string
-		var favoriteInt int
-		var pinnedInt int
-		var archivedInt int
-		if err := rows.Scan(&b.ID, &b.GroupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &archivedInt, &b.SortOrder, &b.RemindAt, &b.OpenCount, &b.LastOpened, &b.CreatedAt, &b.UpdatedAt); err != nil {
+		b, err := scanBookmark(rows)
+		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
-		b.Tags = parseTags(tagsRaw)
-		b.Favorite = favoriteInt == 1
-		b.Pinned = pinnedInt == 1
-		b.Archived = archivedInt == 1
 		items = append(items, b)
 	}
 	if err := rows.Err(); err != nil {
@@ -490,19 +505,11 @@ func (app *application) fetchState(ctx context.Context) ([]group, error) {
 
 		items := make([]bookmark, 0)
 		for bRows.Next() {
-			var b bookmark
-			var tagsRaw string
-			var favoriteInt int
-			var pinnedInt int
-			var archivedInt int
-			if err := bRows.Scan(&b.ID, &b.GroupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &archivedInt, &b.SortOrder, &b.RemindAt, &b.OpenCount, &b.LastOpened, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			b, err := scanBookmark(bRows)
+			if err != nil {
 				bRows.Close()
 				return nil, err
 			}
-			b.Tags = parseTags(tagsRaw)
-			b.Favorite = favoriteInt == 1
-			b.Pinned = pinnedInt == 1
-			b.Archived = archivedInt == 1
 			items = append(items, b)
 		}
 		if err := bRows.Err(); err != nil {
@@ -514,5 +521,72 @@ func (app *application) fetchState(ctx context.Context) ([]group, error) {
 		groups[i].Bookmarks = items
 	}
 
+	unsorted, err := app.fetchUnsortedBookmarks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(unsorted) > 0 {
+		groups = append(groups, group{
+			ID:          0,
+			Name:        unsortedGroupName,
+			Description: "Lesezeichen ohne Gruppe",
+			SortOrder:   len(groups),
+			Bookmarks:   unsorted,
+		})
+	}
+
 	return groups, nil
+}
+
+type bookmarkScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanBookmark(scanner bookmarkScanner) (bookmark, error) {
+	var b bookmark
+	var groupID sql.NullInt64
+	var tagsRaw string
+	var favoriteInt int
+	var pinnedInt int
+	var archivedInt int
+	if err := scanner.Scan(&b.ID, &groupID, &b.Title, &b.URL, &b.Notes, &tagsRaw, &favoriteInt, &pinnedInt, &archivedInt, &b.SortOrder, &b.RemindAt, &b.OpenCount, &b.LastOpened, &b.CreatedAt, &b.UpdatedAt); err != nil {
+		return b, err
+	}
+	if groupID.Valid {
+		b.GroupID = groupID.Int64
+	}
+	b.Tags = parseTags(tagsRaw)
+	b.Favorite = favoriteInt == 1
+	b.Pinned = pinnedInt == 1
+	b.Archived = archivedInt == 1
+	return b, nil
+}
+
+func nullableGroupID(id int64) any {
+	if id <= 0 {
+		return nil
+	}
+	return id
+}
+
+func (app *application) fetchUnsortedBookmarks(ctx context.Context) ([]bookmark, error) {
+	rows, err := app.db.QueryContext(
+		ctx,
+		`SELECT id, group_id, title, url, notes, tags, favorite, pinned, archived, sort_order, remind_at, open_count, last_opened_at, created_at, updated_at
+		 FROM bookmarks WHERE group_id IS NULL ORDER BY pinned DESC, sort_order ASC, id ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]bookmark, 0)
+	for rows.Next() {
+		b, err := scanBookmark(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, b)
+	}
+	return items, rows.Err()
 }

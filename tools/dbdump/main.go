@@ -43,14 +43,19 @@ func main() {
 		log.Fatal(err)
 	}
 	for rows.Next() {
-		var id, groupID int64
+		var id int64
+		var groupID sql.NullInt64
 		var groupName, title, url string
 		var archived, pinned, favorite, sortOrder int
 		if err := rows.Scan(&id, &groupID, &groupName, &title, &url, &archived, &pinned, &favorite, &sortOrder); err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("  id=%d group=%d(%s) archived=%d pinned=%d fav=%d sort=%d title=%q url=%q\n",
-			id, groupID, groupName, archived, pinned, favorite, sortOrder, title, url)
+		groupLabel := "NULL"
+		if groupID.Valid {
+			groupLabel = fmt.Sprintf("%d", groupID.Int64)
+		}
+		fmt.Printf("  id=%d group=%s(%s) archived=%d pinned=%d fav=%d sort=%d title=%q url=%q\n",
+			id, groupLabel, groupName, archived, pinned, favorite, sortOrder, title, url)
 	}
 	rows.Close()
 
@@ -65,14 +70,19 @@ func main() {
 	defer rows.Close()
 	orphans := 0
 	for rows.Next() {
-		var id, groupID int64
+		var id int64
+		var groupID sql.NullInt64
 		var title, url string
 		var archived int
 		if err := rows.Scan(&id, &groupID, &title, &url, &archived); err != nil {
 			log.Fatal(err)
 		}
+		groupLabel := "NULL"
+		if groupID.Valid {
+			groupLabel = fmt.Sprintf("%d", groupID.Int64)
+		}
 		orphans++
-		fmt.Printf("  id=%d group_id=%d(fehlt) archived=%d title=%q url=%q\n", id, groupID, archived, title, url)
+		fmt.Printf("  id=%d group_id=%s(fehlt) archived=%d title=%q url=%q\n", id, groupLabel, archived, title, url)
 	}
 	fmt.Printf("\nverwaiste Lesezeichen gesamt: %d\n", orphans)
 }

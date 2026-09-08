@@ -4,7 +4,7 @@ const state = {
   update: null,
   search: "",
   includeArchivedInSearch: false,
-  filters: { groupId: 0, tag: "", favorite: false, pinned: false, due: false },
+  filters: { groupId: null, tag: "", favorite: false, pinned: false, due: false },
   savedViews: loadSavedViews(),
   collapsedGroupIds: loadCollapsedGroupIds(),
   drag: {
@@ -19,6 +19,7 @@ const savedViewsKey = "lsz_saved_views";
 const favoritesQuickbarOrderKey = "lsz_favorites_quickbar_order";
 let pendingRestorePayload = null;
 let updateProgressTimer = null;
+const unsortedGroupID = 0;
 
 const els = {
   groups: document.getElementById("groups"),
@@ -907,8 +908,9 @@ function populateGroupSelect() {
   els.bookmarkGroup.innerHTML = "";
   const previousModuleValue = els.moduleGroup.value;
   els.moduleGroup.innerHTML = "";
+  const realGroups = state.groups.filter((group) => group.id > unsortedGroupID);
 
-  if (state.groups.length === 0) {
+  if (realGroups.length === 0) {
     const option = document.createElement("option");
     option.value = "";
     option.textContent = "Bitte zuerst eine Gruppe anlegen";
@@ -921,7 +923,7 @@ function populateGroupSelect() {
 
   els.bookmarkGroup.disabled = false;
   els.moduleGroup.disabled = false;
-  for (const group of state.groups) {
+  for (const group of realGroups) {
     const option = document.createElement("option");
     option.value = String(group.id);
     option.textContent = group.name;
@@ -929,10 +931,10 @@ function populateGroupSelect() {
     els.moduleGroup.appendChild(option.cloneNode(true));
   }
 
-  if (previousValue && state.groups.some((group) => String(group.id) === previousValue)) {
+  if (previousValue && realGroups.some((group) => String(group.id) === previousValue)) {
     els.bookmarkGroup.value = previousValue;
   }
-  if (previousModuleValue && state.groups.some((group) => String(group.id) === previousModuleValue)) {
+  if (previousModuleValue && realGroups.some((group) => String(group.id) === previousModuleValue)) {
     els.moduleGroup.value = previousModuleValue;
   }
 }
@@ -980,7 +982,7 @@ function render() {
   let matchCount = 0;
   let archivedMatchCount = 0;
   const filteredGroups = state.groups
-    .filter((group) => !state.filters.groupId || group.id === state.filters.groupId)
+    .filter((group) => state.filters.groupId === null || group.id === state.filters.groupId)
     .map((group) => {
       const allBookmarks = group.bookmarks || [];
       const groupMatches = matchesSearch(group.name, group.description);
@@ -1006,6 +1008,8 @@ function render() {
   for (const group of filteredGroups) {
     const node = els.groupTemplate.content.firstElementChild.cloneNode(true);
     node.dataset.groupId = String(group.id);
+    const isVirtualGroup = group.id === unsortedGroupID;
+    node.draggable = !isVirtualGroup;
 
     node.querySelector(".group-name").textContent = group.name;
     node.querySelector(".group-description").textContent = group.description || "";
@@ -1025,14 +1029,22 @@ function render() {
       applyCollapsedState(node, collapseBtn, nextCollapsed);
     });
 
-    node.querySelector(".edit-group").addEventListener("click", () => onEditGroup(group));
-    node.querySelector(".share-group").addEventListener("click", () => onShareGroup(group));
-    node.querySelector(".delete-group").addEventListener("click", () => onDeleteGroup(group));
+    const editGroupBtn = node.querySelector(".edit-group");
+    const shareGroupBtn = node.querySelector(".share-group");
+    const deleteGroupBtn = node.querySelector(".delete-group");
+    editGroupBtn.hidden = isVirtualGroup;
+    shareGroupBtn.hidden = isVirtualGroup;
+    deleteGroupBtn.hidden = isVirtualGroup;
+    if (!isVirtualGroup) {
+      editGroupBtn.addEventListener("click", () => onEditGroup(group));
+      shareGroupBtn.addEventListener("click", () => onShareGroup(group));
+      deleteGroupBtn.addEventListener("click", () => onDeleteGroup(group));
 
-    node.addEventListener("dragstart", (event) => onGroupDragStart(event, group.id));
-    node.addEventListener("dragend", onGroupDragEnd);
-    node.addEventListener("dragover", onGroupDragOver);
-    node.addEventListener("drop", (event) => onGroupDrop(event, group.id));
+      node.addEventListener("dragstart", (event) => onGroupDragStart(event, group.id));
+      node.addEventListener("dragend", onGroupDragEnd);
+      node.addEventListener("dragover", onGroupDragOver);
+      node.addEventListener("drop", (event) => onGroupDrop(event, group.id));
+    }
 
     const list = node.querySelector(".bookmark-list");
     list.dataset.groupId = String(group.id);
@@ -1340,7 +1352,9 @@ async function onGroupDrop(event, targetGroupID) {
 }
 
 async function persistGroupOrder() {
-  const orderedIDs = [...els.groups.querySelectorAll(".group-card")].map((node) => Number(node.dataset.groupId));
+  const orderedIDs = [...els.groups.querySelectorAll(".group-card")]
+    .map((node) => Number(node.dataset.groupId))
+    .filter((id) => id > unsortedGroupID);
   try {
     await request("/api/groups/reorder", {
       method: "POST",
@@ -1456,7 +1470,7 @@ function shouldShowBookmark(bookmark) {
 }
 
 function hasActiveQuery() {
-  return Boolean(state.search || state.filters.groupId || state.filters.tag || state.filters.favorite || state.filters.pinned || state.filters.due);
+  return Boolean(state.search || state.filters.groupId !== null || state.filters.tag || state.filters.favorite || state.filters.pinned || state.filters.due);
 }
 
 function renderEmptyState() {
@@ -1478,7 +1492,7 @@ function renderEmptyState() {
 }
 
 function onFiltersChanged() {
-  state.filters.groupId = Number(els.filterGroup.value || 0);
+  state.filters.groupId = els.filterGroup.value === "" ? null : Number(els.filterGroup.value);
   state.filters.tag = els.filterTag.value;
   render();
 }
@@ -1492,7 +1506,7 @@ function toggleQuickFilter(name) {
 function resetFilters() {
   state.search = "";
   state.includeArchivedInSearch = false;
-  state.filters = { groupId: 0, tag: "", favorite: false, pinned: false, due: false };
+  state.filters = { groupId: null, tag: "", favorite: false, pinned: false, due: false };
   els.search.value = "";
   els.searchArchive.checked = false;
   els.savedView.value = "";
@@ -1533,7 +1547,7 @@ function applySelectedView() {
   if (!view) return;
   state.search = view.search || "";
   state.includeArchivedInSearch = Boolean(view.includeArchived);
-  state.filters = { groupId: 0, tag: "", favorite: false, pinned: false, due: false, ...(view.filters || {}) };
+  state.filters = { groupId: null, tag: "", favorite: false, pinned: false, due: false, ...(view.filters || {}) };
   els.search.value = state.search;
   els.searchArchive.checked = state.includeArchivedInSearch;
   syncFilterControls();
@@ -1559,7 +1573,7 @@ function populateFilterOptions() {
     .sort((a, b) => a.localeCompare(b, "de"));
   els.filterTag.innerHTML = '<option value="">Alle Tags</option>';
   for (const tag of tags) els.filterTag.add(new Option(tag, tag));
-  els.filterGroup.value = String(selectedGroup || "");
+  els.filterGroup.value = selectedGroup === null ? "" : String(selectedGroup);
   els.filterTag.value = selectedTag;
   populateSavedViews(els.savedView.value);
   syncFilterControls();
@@ -1573,7 +1587,7 @@ function populateSavedViews(selected = "") {
 }
 
 function syncFilterControls() {
-  els.filterGroup.value = String(state.filters.groupId || "");
+  els.filterGroup.value = state.filters.groupId === null ? "" : String(state.filters.groupId);
   els.filterTag.value = state.filters.tag;
   for (const [button, name] of [[els.filterFavorite, "favorite"], [els.filterPinned, "pinned"], [els.filterDue, "due"]]) {
     button.setAttribute("aria-pressed", String(state.filters[name]));
@@ -1669,7 +1683,7 @@ async function onSaveEditedGroup(event) {
 }
 
 async function onDeleteGroup(group) {
-  if (!confirm(`Gruppe "${group.name}" und alle Lesezeichen wirklich löschen?`)) return;
+  if (!confirm(`Gruppe "${group.name}" löschen? Enthaltene Lesezeichen bleiben unter "Unsortiert" erhalten.`)) return;
   try {
     await request(`/api/groups/${group.id}`, { method: "DELETE" });
     setStatus("Gruppe gelöscht.");
@@ -1705,7 +1719,7 @@ async function onExportGroup(event) {
 async function onCreateBookmark(event) {
   event.preventDefault();
 
-  if (state.groups.length === 0) {
+  if (!state.groups.some((group) => group.id > unsortedGroupID)) {
     setStatus("Bitte zuerst eine Gruppe anlegen.", true);
     return;
   }
@@ -1778,14 +1792,20 @@ async function onEditBookmark(bookmark) {
 function populateBookmarkEditGroupSelect(selectedGroupID) {
   els.bookmarkEditGroup.innerHTML = "";
 
+  const unsortedOption = document.createElement("option");
+  unsortedOption.value = String(unsortedGroupID);
+  unsortedOption.textContent = "Unsortiert";
+  els.bookmarkEditGroup.appendChild(unsortedOption);
+
   for (const group of state.groups) {
+    if (group.id === unsortedGroupID) continue;
     const option = document.createElement("option");
     option.value = String(group.id);
     option.textContent = group.name;
     els.bookmarkEditGroup.appendChild(option);
   }
 
-  if (selectedGroupID && state.groups.some((group) => group.id === selectedGroupID)) {
+  if (selectedGroupID === unsortedGroupID || state.groups.some((group) => group.id === selectedGroupID)) {
     els.bookmarkEditGroup.value = String(selectedGroupID);
   }
 }
@@ -1807,7 +1827,7 @@ async function onSaveEditedBookmark(event) {
     return;
   }
 
-  if (!Number.isFinite(groupID) || groupID <= 0) {
+  if (!Number.isFinite(groupID) || groupID < 0) {
     setStatus("Bitte eine gültige Gruppe wählen.", true);
     return;
   }

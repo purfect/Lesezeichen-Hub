@@ -1209,7 +1209,7 @@ func TestFetchUpdateInfoFromManifestAvoidsGitHubAPI(t *testing.T) {
 	}
 }
 
-func TestDeletingGroupCascadesToItsBookmarks(t *testing.T) {
+func TestDeletingGroupKeepsBookmarksUnsorted(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "data.db")
 	db, err := sql.Open("sqlite", databaseDSN(dbPath))
 	if err != nil {
@@ -1241,16 +1241,16 @@ func TestDeletingGroupCascadesToItsBookmarks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var remaining int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bookmarks WHERE url = '/modules/1/index.html'`).Scan(&remaining); err != nil {
+	var groupIDAfterDelete sql.NullInt64
+	if err := db.QueryRow(`SELECT group_id FROM bookmarks WHERE url = '/modules/1/index.html'`).Scan(&groupIDAfterDelete); err != nil {
 		t.Fatal(err)
 	}
-	if remaining != 0 {
-		t.Errorf("verbliebene Lesezeichen = %d, want 0 (Gruppenloeschung muss kaskadieren)", remaining)
+	if groupIDAfterDelete.Valid {
+		t.Errorf("group_id nach Gruppenloeschung = %d, want NULL", groupIDAfterDelete.Int64)
 	}
 }
 
-func TestInitializeSchemaRemovesOrphanedBookmarks(t *testing.T) {
+func TestInitializeSchemaMovesOrphanedBookmarksToUnsorted(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "data.db")
 	db, err := sql.Open("sqlite", databaseDSN(dbPath))
 	if err != nil {
@@ -1276,12 +1276,12 @@ func TestInitializeSchemaRemovesOrphanedBookmarks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var remaining int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bookmarks WHERE url = '/modules/1/index.html'`).Scan(&remaining); err != nil {
+	var groupIDAfterMigration sql.NullInt64
+	if err := db.QueryRow(`SELECT group_id FROM bookmarks WHERE url = '/modules/1/index.html'`).Scan(&groupIDAfterMigration); err != nil {
 		t.Fatal(err)
 	}
-	if remaining != 0 {
-		t.Errorf("verwaiste Lesezeichen = %d, want 0", remaining)
+	if groupIDAfterMigration.Valid {
+		t.Errorf("group_id nach Schema-Initialisierung = %d, want NULL", groupIDAfterMigration.Int64)
 	}
 }
 

@@ -28,13 +28,13 @@ func initializeSchema(db *sql.DB) error {
 		);`,
 		`CREATE TABLE IF NOT EXISTS bookmarks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			group_id INTEGER NOT NULL,
+			group_id INTEGER NULL,
 			title TEXT NOT NULL,
 			url TEXT NOT NULL,
 			notes TEXT NOT NULL DEFAULT '',
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
+			FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE SET NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_bookmarks_group_id ON bookmarks(group_id);`,
 		`CREATE TABLE IF NOT EXISTS notes (
@@ -120,14 +120,126 @@ func initializeSchema(db *sql.DB) error {
 		}
 	}
 
+	if err := migrateBookmarksGroupIDNullable(db); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_bookmarks_group_id ON bookmarks(group_id);`); err != nil {
+		return err
+	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_bookmarks_group_sort ON bookmarks(group_id, pinned DESC, sort_order ASC, id ASC);`); err != nil {
 		return err
 	}
-	if _, err := db.Exec(`DELETE FROM bookmarks WHERE group_id NOT IN (SELECT id FROM groups)`); err != nil {
+	if _, err := db.Exec(`UPDATE bookmarks SET group_id = NULL WHERE group_id NOT IN (SELECT id FROM groups)`); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func migrateBookmarksGroupIDNullable(db *sql.DB) error {
+	needsMigration := false
+
+	rows, err := db.Query(`PRAGMA table_info(bookmarks)`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "group_id" && notNull == 1 {
+			needsMigration = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	fkRows, err := db.Query(`PRAGMA foreign_key_list(bookmarks)`)
+	if err != nil {
+		return err
+	}
+	for fkRows.Next() {
+		var id, seq int
+		var table, from, to, onUpdate, onDelete, match string
+		if err := fkRows.Scan(&id, &seq, &table, &from, &to, &onUpdate, &onDelete, &match); err != nil {
+			fkRows.Close()
+			return err
+		}
+		if table == "groups" && from == "group_id" && strings.ToUpper(onDelete) != "SET NULL" {
+			needsMigration = true
+		}
+	}
+	if err := fkRows.Err(); err != nil {
+		fkRows.Close()
+		return err
+	}
+	fkRows.Close()
+
+	if !needsMigration {
+		return nil
+	}
+
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer db.Exec(`PRAGMA foreign_keys = ON`)
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`ALTER TABLE bookmarks RENAME TO bookmarks_old`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE TABLE bookmarks (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		group_id INTEGER NULL,
+		title TEXT NOT NULL,
+		url TEXT NOT NULL,
+		notes TEXT NOT NULL DEFAULT '',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		tags TEXT NOT NULL DEFAULT '',
+		favorite INTEGER NOT NULL DEFAULT 0,
+		pinned INTEGER NOT NULL DEFAULT 0,
+		sort_order INTEGER NOT NULL DEFAULT 0,
+		archived INTEGER NOT NULL DEFAULT 0,
+		remind_at DATETIME NULL,
+		open_count INTEGER NOT NULL DEFAULT 0,
+		last_opened_at DATETIME NULL,
+		FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE SET NULL
+	)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO bookmarks (
+		id, group_id, title, url, notes, created_at, updated_at, tags, favorite, pinned,
+		sort_order, archived, remind_at, open_count, last_opened_at
+	)
+	SELECT
+		id,
+		CASE WHEN group_id IN (SELECT id FROM groups) THEN group_id ELSE NULL END,
+		title, url, notes, created_at, updated_at, tags, favorite, pinned,
+		sort_order, archived, remind_at, open_count, last_opened_at
+	FROM bookmarks_old`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE bookmarks_old`); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func databaseDSN(path string) string {
