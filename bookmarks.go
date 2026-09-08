@@ -211,7 +211,7 @@ func (app *application) handleBookmarks(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	if duplicate, err := app.findDuplicateBookmark(r.Context(), urlValue, 0); err != nil {
+	if duplicate, err := app.findDuplicateBookmark(r.Context(), payload.GroupID, urlValue, 0); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	} else if duplicate != "" {
@@ -313,7 +313,7 @@ func (app *application) handleBookmarkRoutes(w http.ResponseWriter, r *http.Requ
 			writeErr(w, http.StatusBadRequest, err)
 			return
 		}
-		if duplicate, err := app.findDuplicateBookmark(r.Context(), urlValue, bookmarkID); err != nil {
+		if duplicate, err := app.findDuplicateBookmark(r.Context(), payload.GroupID, urlValue, bookmarkID); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		} else if duplicate != "" {

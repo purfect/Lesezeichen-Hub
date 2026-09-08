@@ -401,7 +401,7 @@ func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 	bookmarkID, _ := result.LastInsertId()
 
 	app := &application{db: db}
-	duplicate, err := app.findDuplicateBookmark(context.Background(), "HTTPS://EXAMPLE.COM:443/path/#section", 0)
+	duplicate, err := app.findDuplicateBookmark(context.Background(), groupID, "HTTPS://EXAMPLE.COM:443/path/#section", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 		"https://example.com/path#other-section",
 	}
 	for _, distinctURL := range distinctURLs {
-		duplicate, err = app.findDuplicateBookmark(context.Background(), distinctURL, 0)
+		duplicate, err = app.findDuplicateBookmark(context.Background(), groupID, distinctURL, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -424,12 +424,60 @@ func TestFindDuplicateBookmarkRecognizesNormalizedURL(t *testing.T) {
 		}
 	}
 
-	duplicate, err = app.findDuplicateBookmark(context.Background(), "https://example.com/path#section", bookmarkID)
+	duplicate, err = app.findDuplicateBookmark(context.Background(), groupID, "https://example.com/path#section", bookmarkID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if duplicate != "" {
 		t.Errorf("bearbeitetes Lesezeichen wurde als eigenes Duplikat erkannt: %s", duplicate)
+	}
+
+	otherGroup, err := db.Exec(`INSERT INTO groups(name) VALUES('Privat')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGroupID, _ := otherGroup.LastInsertId()
+	duplicate, err = app.findDuplicateBookmark(context.Background(), otherGroupID, "https://example.com/path#section", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate != "" {
+		t.Errorf("URL aus einer anderen Gruppe wurde als Duplikat erkannt: %s", duplicate)
+	}
+}
+
+func TestUpdateBookmarkAllowsAddingTagsToExistingBookmark(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	group, err := db.Exec(`INSERT INTO groups(name) VALUES('Themen')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupID, _ := group.LastInsertId()
+	bookmark, err := db.Exec(`INSERT INTO bookmarks(group_id, title, url, tags) VALUES(?, ?, ?, ?)`, groupID, "EKS Cluster", "https://jira.example.com/browse/BTRTMMS-144", "alt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bookmarkID, _ := bookmark.LastInsertId()
+
+	app := &application{db: db}
+	body := strings.NewReader(`{"group_id":` + strconv.FormatInt(groupID, 10) + `,"title":"EKS Cluster","url":"https://jira.example.com/browse/BTRTMMS-144","notes":"","tags":["alt","neu"],"favorite":false,"pinned":false,"archived":false,"sort_order":0,"remind_at":""}`)
+	request := httptest.NewRequest(http.MethodPut, "/api/bookmarks/"+strconv.FormatInt(bookmarkID, 10), body)
+	response := httptest.NewRecorder()
+	app.handleBookmarkRoutes(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var tags string
+	if err := db.QueryRow(`SELECT tags FROM bookmarks WHERE id = ?`, bookmarkID).Scan(&tags); err != nil {
+		t.Fatal(err)
+	}
+	if tags != "alt,neu" {
+		t.Fatalf("tags = %q, want %q", tags, "alt,neu")
 	}
 }
 
