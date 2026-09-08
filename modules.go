@@ -550,9 +550,11 @@ func (app *application) installExternalModuleArchive(ctx context.Context, rawNam
 	archive.Close()
 	defer os.Remove(archivePath)
 	if err := downloadFile(ctx, downloadURL, archivePath); err != nil {
-		return catalogModule{}, err
+		fallbackURL, fallbackOK := githubPublicArchiveURL(ctx, displaySourceURL)
+		if !fallbackOK || downloadFile(ctx, fallbackURL, archivePath) != nil {
+			return catalogModule{}, err
+		}
 	}
-
 	staging, err := os.MkdirTemp(installBase, ".module-import-*")
 	if err != nil {
 		return catalogModule{}, err
@@ -609,6 +611,41 @@ func (app *application) installExternalModuleArchive(ctx context.Context, rawNam
 		LocalID:       moduleID,
 		LocalURL:      moduleURL,
 	}, nil
+}
+
+func githubPublicArchiveURL(ctx context.Context, repositoryURL string) (string, bool) {
+	u, err := url.Parse(repositoryURL)
+	if err != nil || !strings.EqualFold(u.Host, "github.com") {
+		return "", false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", false
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repositoryURL, nil)
+	if err != nil {
+		return "", false
+	}
+	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	response, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil || response.StatusCode != http.StatusOK {
+		if response != nil {
+			response.Body.Close()
+		}
+		return "", false
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+	if err != nil {
+		return "", false
+	}
+	branchPattern := regexp.MustCompile(`href="/` + regexp.QuoteMeta(parts[0]) + `/` + regexp.QuoteMeta(parts[1]) + `/commits/([^"/?]+)`)
+	match := branchPattern.FindSubmatch(body)
+	if len(match) < 2 {
+		return "", false
+	}
+	branch := string(match[1])
+	return fmt.Sprintf("https://github.com/%s/%s/archive/refs/heads/%s.zip", url.PathEscape(parts[0]), url.PathEscape(parts[1]), url.PathEscape(branch)), true
 }
 
 func (app *application) updateModule(ctx context.Context, moduleID int64) (catalogModule, error) {
