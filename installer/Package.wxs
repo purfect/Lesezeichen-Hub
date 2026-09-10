@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <?ifndef Version?>
+  <?define Version = "0.0.1"?>
+  <?endif?>
+  <?ifndef StageDir?>
+  <?define StageDir = "stage"?>
+  <?endif?>
+
+  <Package Name="Lesezeichen-Hub"
+           Manufacturer="Lesezeichen-Hub"
+           Version="$(Version)"
+           UpgradeCode="4B2F0C6E-8A5D-4C0B-9E2D-6F1B7A3C9D14"
+           Scope="perUser"
+           Compressed="yes"
+           InstallerVersion="500">
+
+    <SummaryInformation Description="Lesezeichen-Hub Setup" Manufacturer="Lesezeichen-Hub" />
+
+    <MajorUpgrade DowngradeErrorMessage="Eine neuere Version von Lesezeichen-Hub ist bereits installiert." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="lesezeichen.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/purfect/Lesezeichen-Hub" />
+
+    <!-- Vom Konfigurationsdialog gesetzt und in lesezeichen.ini geschrieben. -->
+    <Property Id="PORT" Value="3333">
+      <!-- Bei Updates den zuvor gewaehlten Port uebernehmen. -->
+      <RegistrySearch Id="PreviousPortSearch" Root="HKCU" Key="Software\Lesezeichen-Hub" Name="Port" Type="raw" />
+    </Property>
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <!-- Bei Updates den zuvor gewaehlten Zielordner uebernehmen. -->
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Id="PreviousInstallFolderSearch" Root="HKCU" Key="Software\Lesezeichen-Hub" Name="InstallPath" Type="raw" />
+    </Property>
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Lesezeichen-Hub" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="StartupFolder" />
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuFolder" Name="Lesezeichen-Hub" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutable">
+        <File Id="LesezeichenHubExe" Source="$(StageDir)\Lesezeichen-Hub.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="StartCmdComponent">
+        <File Id="StartCmd" Source="$(StageDir)\start-lesezeichen.cmd" KeyPath="yes" />
+      </Component>
+      <Component Id="StartPs1Component">
+        <File Id="StartPs1" Source="$(StageDir)\start-lesezeichen.ps1" KeyPath="yes" />
+      </Component>
+      <Component Id="AutostartCmdComponent">
+        <File Id="AutostartCmd" Source="$(StageDir)\autostart-lesezeichen.cmd" KeyPath="yes" />
+      </Component>
+      <Component Id="StopCmdComponent">
+        <File Id="StopCmd" Source="$(StageDir)\stop-lesezeichen.cmd" KeyPath="yes" />
+      </Component>
+      <Component Id="StopPs1Component">
+        <File Id="StopPs1" Source="$(StageDir)\stop-lesezeichen.ps1" KeyPath="yes" />
+      </Component>
+      <Component Id="ReadmeComponent">
+        <File Id="ReadmeMd" Source="$(StageDir)\README.md" KeyPath="yes" />
+      </Component>
+      <Component Id="IconComponent">
+        <File Id="AppIconFile" Source="$(StageDir)\lesezeichen.ico" KeyPath="yes" />
+      </Component>
+      <Component Id="PortConfiguration" Guid="9C1E4B77-6D2A-4F35-8B10-2E7A5C90D3A6">
+        <IniFile Id="PortIni" Name="lesezeichen.ini" Directory="INSTALLFOLDER"
+                 Section="server" Key="port" Value="[PORT]" Action="addLine" />
+        <RegistryValue Root="HKCU" Key="Software\Lesezeichen-Hub" Name="Port" Type="string" Value="[PORT]" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\Lesezeichen-Hub" Name="InstallPath" Type="string" Value="[INSTALLFOLDER]" />
+      </Component>
+    </ComponentGroup>
+
+    <Component Id="DesktopShortcuts" Directory="DesktopFolder" Guid="1D5A8E62-3F47-49C8-A0B6-8C4D2F19E735">
+      <Shortcut Id="DesktopStartShortcut"
+                Name="Lesezeichen-Hub starten"
+                Description="Startet den Lesezeichen-Hub und oeffnet den Browser"
+                Target="[INSTALLFOLDER]start-lesezeichen.cmd"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon.ico"
+                Show="minimized" />
+      <Shortcut Id="DesktopStopShortcut"
+                Name="Lesezeichen-Hub stoppen"
+                Description="Beendet den laufenden Lesezeichen-Hub"
+                Target="[INSTALLFOLDER]stop-lesezeichen.cmd"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon.ico"
+                Show="minimized" />
+      <RegistryValue Root="HKCU" Key="Software\Lesezeichen-Hub" Name="DesktopShortcuts" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Component Id="StartMenuShortcuts" Directory="AppMenuFolder" Guid="5E8C1A94-72B3-4D61-9F08-B3A6D5C42E18">
+      <Shortcut Id="MenuStartShortcut"
+                Name="Lesezeichen-Hub starten"
+                Description="Startet den Lesezeichen-Hub und oeffnet den Browser"
+                Target="[INSTALLFOLDER]start-lesezeichen.cmd"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon.ico"
+                Show="minimized" />
+      <Shortcut Id="MenuStopShortcut"
+                Name="Lesezeichen-Hub stoppen"
+                Description="Beendet den laufenden Lesezeichen-Hub"
+                Target="[INSTALLFOLDER]stop-lesezeichen.cmd"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon.ico"
+                Show="minimized" />
+      <Shortcut Id="MenuUninstallShortcut"
+                Name="Lesezeichen-Hub deinstallieren"
+                Description="Entfernt Lesezeichen-Hub"
+                Target="[System64Folder]msiexec.exe"
+                Arguments="/x [ProductCode]" />
+      <RemoveFolder Id="RemoveAppMenuFolder" Directory="AppMenuFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Lesezeichen-Hub" Name="StartMenuShortcuts" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Component Id="AutostartShortcut" Directory="StartupFolder" Guid="A7304F1C-56D8-4E2B-8C93-0B7F1D6A825E">
+      <Shortcut Id="StartupStartShortcut"
+                Name="Lesezeichen-Hub"
+                Description="Startet den Lesezeichen-Hub beim Anmelden"
+                Target="[INSTALLFOLDER]autostart-lesezeichen.cmd"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon.ico"
+                Show="minimized" />
+      <RegistryValue Root="HKCU" Key="Software\Lesezeichen-Hub" Name="Autostart" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="MainFeature" Title="Lesezeichen-Hub" Description="Programmdateien und Start-/Stop-Skripte." Level="1" AllowAbsent="no" ConfigurableDirectory="INSTALLFOLDER">
+      <ComponentGroupRef Id="AppFiles" />
+
+      <Feature Id="FeatureDesktopShortcuts" Title="Desktop-Verknuepfungen" Description="Verknuepfungen zum Starten und Stoppen auf dem Desktop." Level="1">
+        <ComponentRef Id="DesktopShortcuts" />
+      </Feature>
+
+      <Feature Id="FeatureStartMenu" Title="Startmenue-Eintraege" Description="Startmenue-Ordner mit Starten, Stoppen und Deinstallieren." Level="1">
+        <ComponentRef Id="StartMenuShortcuts" />
+      </Feature>
+
+      <Feature Id="FeatureAutostart" Title="Automatisch starten" Description="Startet den Hub beim Anmelden ohne Browserfenster." Level="1000">
+        <ComponentRef Id="AutostartShortcut" />
+      </Feature>
+    </Feature>
+
+    <UI>
+      <ui:WixUI Id="WixUI_FeatureTree" />
+
+      <!-- Kein Lizenzdialog: direkt vom Willkommensdialog zur Konfiguration. -->
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="ConfigDlg" Order="10" Condition="NOT Installed" />
+      <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="ConfigDlg" Order="10" Condition="NOT Installed" />
+    </UI>
+
+    <UIRef Id="ConfigDlgUI" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+  </Package>
+</Wix>

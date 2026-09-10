@@ -2,9 +2,11 @@
 setlocal
 
 set "PORT=%~1"
-if "%PORT%"=="" set "PORT=3333"
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-lesezeichen.ps1" -Port %PORT%
+if "%PORT%"=="" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-lesezeichen.ps1"
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-lesezeichen.ps1" -Port %PORT%
+)
 if errorlevel 1 (
   echo.
   echo Start fehlgeschlagen. Details stehen oben.

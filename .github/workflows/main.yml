@@ -3,6 +3,12 @@ name: Build Windows Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Versionsnummer fuer einen Testbuild (Artefakte statt Release-Assets)"
+        required: false
+        default: "0.0.1"
 
 permissions:
   contents: write
@@ -10,8 +16,10 @@ permissions:
 jobs:
   build-windows-exe:
     # Only run for tags starting with a digit, e.g. 1.0.0, 2-beta
-    if: startsWith(github.event.release.tag_name, '0') || startsWith(github.event.release.tag_name, '1') || startsWith(github.event.release.tag_name, '2') || startsWith(github.event.release.tag_name, '3') || startsWith(github.event.release.tag_name, '4') || startsWith(github.event.release.tag_name, '5') || startsWith(github.event.release.tag_name, '6') || startsWith(github.event.release.tag_name, '7') || startsWith(github.event.release.tag_name, '8') || startsWith(github.event.release.tag_name, '9')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, '0') || startsWith(github.event.release.tag_name, '1') || startsWith(github.event.release.tag_name, '2') || startsWith(github.event.release.tag_name, '3') || startsWith(github.event.release.tag_name, '4') || startsWith(github.event.release.tag_name, '5') || startsWith(github.event.release.tag_name, '6') || startsWith(github.event.release.tag_name, '7') || startsWith(github.event.release.tag_name, '8') || startsWith(github.event.release.tag_name, '9')
     runs-on: windows-2022
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
     steps:
       - name: Checkout
@@ -25,7 +33,7 @@ jobs:
       - name: Build Windows executable
         shell: pwsh
         run: |
-          $tag = "${{ github.event.release.tag_name }}"
+          $tag = $env:TAG
           $out = "Lesezeichen-Hub_${tag}.exe"
           $env:GOOS = "windows"
           $env:GOARCH = "amd64"
@@ -35,15 +43,68 @@ jobs:
           "$($hash.Hash)  $out" | Out-File -FilePath "$out.sha256" -Encoding ascii
           "ASSET_NAME=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.*
+          wix extension add -g WixToolset.UI.wixext/5.*
+
+      - name: Build MSI installer
+        shell: pwsh
+        run: |
+          $tag = $env:TAG
+          $stage = "installer\stage"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          # Die MSI braucht einen festen Dateinamen, das Release-Asset traegt den Tag.
+          Copy-Item $env:ASSET_NAME (Join-Path $stage "Lesezeichen-Hub.exe") -Force
+          Copy-Item start-lesezeichen.cmd, start-lesezeichen.ps1, autostart-lesezeichen.cmd, stop-lesezeichen.cmd, stop-lesezeichen.ps1, README.md $stage -Force
+          Copy-Item installer\lesezeichen.ico $stage -Force
+
+          # MSI-ProductVersion erlaubt nur major.minor.build, jeweils numerisch.
+          $parts = ($tag -replace '[^0-9.].*$', '').Trim('.').Split('.')
+          $msiVersion = @(
+            [int]($parts[0]),
+            $(if ($parts.Count -gt 1) { [int]$parts[1] } else { 0 }),
+            $(if ($parts.Count -gt 2) { [int]$parts[2] } else { 0 })
+          ) -join '.'
+          Write-Host "MSI-Version: $msiVersion"
+
+          $msi = "Lesezeichen-Hub_${tag}.msi"
+          wix build installer\Package.wxs installer\ConfigDlg.wxs `
+            -arch x64 `
+            -define "Version=$msiVersion" `
+            -define "StageDir=stage" `
+            -bindpath installer `
+            -ext WixToolset.UI.wixext `
+            -out $msi
+          if ($LASTEXITCODE -ne 0) { throw "wix build fehlgeschlagen" }
+
+          $hash = Get-FileHash $msi -Algorithm SHA256
+          "$($hash.Hash)  $msi" | Out-File -FilePath "$msi.sha256" -Encoding ascii
+          "MSI_NAME=$msi" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload build artifacts (Testbuild)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lesezeichen-hub-${{ env.TAG }}
+          path: |
+            ${{ env.ASSET_NAME }}
+            ${{ env.MSI_NAME }}
+
       - name: Upload executable to release assets
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name }}
           files: |
             ${{ env.ASSET_NAME }}
             ${{ env.ASSET_NAME }}.sha256
+            ${{ env.MSI_NAME }}
+            ${{ env.MSI_NAME }}.sha256
 
       - name: Publish update manifest
+        if: github.event_name == 'release'
         shell: pwsh
         run: |
           $tag = "${{ github.event.release.tag_name }}"

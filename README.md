@@ -27,6 +27,21 @@ Die Anwendung laeuft komplett lokal, bietet Gruppen, Tags, Favoriten, Wiedervorl
 - Lokale SQLite-Datenbank
 - Lokale Webanwendungen als Lesezeichen in bestehende Gruppen integrieren
 
+## Installation unter Windows (MSI)
+
+Fuer den normalen Betrieb gibt es ein Installationspaket. Es wird bei jedem Release automatisch gebaut und liegt als `Lesezeichen-Hub_<version>.msi` bei den Release-Assets.
+
+1. MSI herunterladen und starten. Das Paket ist nicht signiert, daher meldet sich der SmartScreen-Filter: **Weitere Informationen > Trotzdem ausfuehren**.
+2. Im Dialog **Zielordner und Port** den Installationsordner (Standard: `%LOCALAPPDATA%\Programs\Lesezeichen-Hub`) und den Port (Standard: `3333`) festlegen.
+3. Im naechsten Schritt auswaehlen, was eingerichtet werden soll:
+   - **Desktop-Verknuepfungen** (Starten und Stoppen)
+   - **Startmenue-Eintraege** (Starten, Stoppen, Deinstallieren)
+   - **Automatisch starten** beim Anmelden, ohne Browserfenster (standardmaessig abgewaehlt)
+
+Die Installation laeuft im Benutzerprofil und braucht keine Administratorrechte. Der gewaehlte Port wird in `lesezeichen.ini` im Installationsordner gespeichert und kann dort spaeter geaendert werden.
+
+Datenbank (`data.db`), Laufzeitdateien (`.runtime`) und heruntergeladene Module liegen ebenfalls im Installationsordner. Beim Deinstallieren bleiben diese Daten erhalten und muessen bei Bedarf von Hand geloescht werden.
+
 ## Schnellstart
 
 Voraussetzung: Go 1.23 oder neuer
@@ -47,7 +62,7 @@ go run .
 
 http://127.0.0.1:2222
 
-`go run .` nutzt standardmaessig Port `2222`. Die Windows-Klickstartskripte nutzen dagegen Port `3233`, damit der Startport dort direkt als Parameter angepasst werden kann.
+`go run .` nutzt standardmaessig Port `2222`. Die Windows-Klickstartskripte nutzen dagegen Port `3333`, sofern nichts anderes konfiguriert ist.
 
 ## Lokale Module integrieren
 
@@ -73,15 +88,23 @@ Nach dem Build kannst du den Hub ohne Terminal starten:
 
 - start-lesezeichen.cmd startet den Server im Hintergrund und oeffnet den Browser
 - stop-lesezeichen.cmd beendet den laufenden Server
+- autostart-lesezeichen.cmd startet den Server ohne Browserfenster (wird fuer den Autostart verwendet)
 - Die Logik liegt in start-lesezeichen.ps1 und stop-lesezeichen.ps1
 - Laufzeitdateien landen in .runtime, damit der Projekt-Root sauber bleibt
 
 Port anpassen:
 
-- Standard-Port in start-lesezeichen.cmd: set "PORT=3233"
+- Ohne Angabe wird der Port in dieser Reihenfolge ermittelt: Parameter, `lesezeichen.ini` neben den Skripten, Umgebungsvariable `LESEZEICHEN_PORT`, sonst `3333`
 - Optional beim Start als Parameter: start-lesezeichen.cmd 2233
+- Dauerhaft ueber `lesezeichen.ini` im selben Ordner:
+
+```ini
+[server]
+port=3333
+```
+
 - Beim Portwechsel wird ein alter Prozess automatisch beendet und neu gestartet
-- Nach Klickstart im Browser oeffnen: http://127.0.0.1:3233
+- Nach Klickstart im Browser oeffnen: http://127.0.0.1:3333
 
 ## Webseite direkt aus Firefox speichern (Tampermonkey)
 

@@ -1,5 +1,6 @@
 param(
-    [int]$Port = 3333
+    [int]$Port = 0,
+    [switch]$NoBrowser
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,6 +15,36 @@ $pidFile = Join-Path $runtimeDir 'lesezeichen.pid'
 $addrFile = Join-Path $runtimeDir 'lesezeichen.addr'
 $logFile = Join-Path $runtimeDir 'lesezeichen.log'
 $errLogFile = Join-Path $runtimeDir 'lesezeichen.err.log'
+
+function Get-ConfiguredPort {
+    param([string]$AppDir)
+
+    # Vom Installer geschriebene Konfiguration, sonst Umgebungsvariable, sonst Standard.
+    $iniFile = Join-Path $AppDir 'lesezeichen.ini'
+    if (Test-Path $iniFile) {
+        foreach ($line in (Get-Content $iniFile -ErrorAction SilentlyContinue)) {
+            if ($line -match '^\s*port\s*=\s*(\d+)\s*$') {
+                return [int]$Matches[1]
+            }
+        }
+    }
+
+    if ($env:LESEZEICHEN_PORT -match '^\d+$') {
+        return [int]$env:LESEZEICHEN_PORT
+    }
+
+    return 3333
+}
+
+if ($Port -le 0) {
+    $Port = Get-ConfiguredPort -AppDir $appDir
+}
+
+if ($Port -lt 1 -or $Port -gt 65535) {
+    Write-Host "Ungueltiger Port: $Port" -ForegroundColor Red
+    exit 1
+}
+
 $addr = "127.0.0.1:$Port"
 
 $exe = $null
@@ -74,7 +105,9 @@ if (Test-Path $pidFile) {
 
             if ($oldAddr -ieq $addr -and (Test-HubReady -Address $addr)) {
                 Write-Host "Lesezeichen-Hub laeuft bereits auf $addr (PID $oldPid)."
-                Start-Process "http://$addr" | Out-Null
+                if (-not $NoBrowser) {
+                    Start-Process "http://$addr" | Out-Null
+                }
                 exit 0
             }
 
@@ -130,5 +163,7 @@ if (-not $ready) {
 }
 
 Write-Host "Lesezeichen-Hub gestartet auf $addr. PID: $($process.Id)"
-Start-Process "http://$addr" | Out-Null
+if (-not $NoBrowser) {
+    Start-Process "http://$addr" | Out-Null
+}
 exit 0

@@ -8,3 +8,6 @@ data.db-wal
 .runtime/
 modules/
 RELEASE_NOTES*.md
+installer/stage/
+*.msi
+*.wixpdb

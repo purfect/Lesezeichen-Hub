@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <UI Id="ConfigDlgUI">
+      <Dialog Id="ConfigDlg" Width="370" Height="270" Title="Lesezeichen-Hub einrichten">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Zielordner und Port" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Legen Sie fest, wohin installiert wird und auf welchem Port der Hub laeuft." />
+
+        <Control Id="FolderLabel" Type="Text" X="20" Y="60" Width="290" Height="10" NoPrefix="yes" Text="Installationsordner:" />
+        <Control Id="Folder" Type="PathEdit" X="20" Y="74" Width="250" Height="18" Property="WIXUI_INSTALLDIR" Indirect="yes" />
+        <Control Id="ChangeFolder" Type="PushButton" X="280" Y="73" Width="56" Height="17" Text="Durchsuchen..." />
+        <Control Id="FolderHint" Type="Text" X="20" Y="96" Width="316" Height="20" NoPrefix="yes" Text="In diesem Ordner werden auch die Datenbank (data.db) und installierte Module abgelegt." />
+
+        <Control Id="PortLabel" Type="Text" X="20" Y="130" Width="290" Height="10" NoPrefix="yes" Text="Port (1024 - 65535):" />
+        <Control Id="PortEdit" Type="Edit" X="20" Y="144" Width="60" Height="18" Property="PORT" Integer="yes" />
+        <Control Id="PortHint" Type="Text" X="20" Y="168" Width="316" Height="30" NoPrefix="yes" Text="Der Hub ist danach unter http://127.0.0.1:&lt;Port&gt; erreichbar. Die Einstellung wird in lesezeichen.ini gespeichert und kann spaeter dort geaendert werden." />
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="Zurueck" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="Weiter" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Abbrechen">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="InvalidPortDlg" Width="260" Height="85" Title="Ungueltiger Port" NoMinimize="yes">
+        <Control Id="Text" Type="Text" X="48" Y="15" Width="194" Height="30" NoPrefix="yes"
+                 Text="Bitte einen Port zwischen 1024 und 65535 angeben." />
+        <Control Id="Icon" Type="Icon" X="15" Y="15" Width="24" Height="24" ToolTip="Hinweis" FixedSize="yes" IconSize="32" Text="WixUI_Ico_Exclam" />
+        <Control Id="Return" Type="PushButton" X="102" Y="57" Width="56" Height="17" Default="yes" Cancel="yes" Text="OK">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <Publish Dialog="ConfigDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="ConfigDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
+
+      <Publish Dialog="ConfigDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+
+      <Publish Dialog="ConfigDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="ConfigDlg" Control="Next" Event="SpawnDialog" Value="InvalidPortDlg" Order="2" Condition="PORT &lt; 1024 OR PORT &gt; 65535" />
+      <Publish Dialog="ConfigDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" Order="3" Condition="PORT &gt;= 1024 AND PORT &lt;= 65535" />
+    </UI>
+  </Fragment>
+</Wix>
