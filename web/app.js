@@ -142,7 +142,7 @@ function init() {
   els.search.addEventListener("input", (e) => {
     state.search = e.target.value.trim().toLowerCase();
     updateSearchClearButton();
-    render();
+    scheduleSearchReload();
     scheduleSearchTracking(state.search);
   });
   els.searchArchive.addEventListener("change", (e) => {
@@ -269,6 +269,16 @@ function clearSearch() {
 }
 
 let _searchTrackTimer = null;
+let _searchReloadTimer = null;
+
+function scheduleSearchReload() {
+  clearTimeout(_searchReloadTimer);
+  if (!state.search) {
+    render();
+    return;
+  }
+  _searchReloadTimer = setTimeout(() => loadState(), 350);
+}
 
 function scheduleSearchTracking(term) {
   clearTimeout(_searchTrackTimer);
