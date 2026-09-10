@@ -85,6 +85,16 @@
       transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
     }
 
+    .notes-sidebar-toggles {
+      display: flex;
+      gap: 8px;
+    }
+
+    .notes-sidebar-toggles .btn-bookmark-notes {
+      flex: 1;
+      width: auto;
+    }
+
     .btn-bookmark-notes:hover,
     .btn-bookmark-notes.active {
       border-color: var(--accent);
@@ -148,6 +158,7 @@
     .type-code    { background: rgba(99, 140, 240, 0.18); color: #7ba4f7; }
     .type-annotation { background: rgba(240, 180, 60, 0.18); color: #e8b84b; }
     .type-vault   { background: rgba(199, 79, 87, 0.2); color: #ff8b93; }
+    .type-checklist { background: rgba(155, 129, 224, 0.2); color: #b79bf0; }
 
     .notes-section-title {
       font-size: 0.72rem;
@@ -170,6 +181,70 @@
       font-size: 0.85rem;
       text-align: center;
     }
+
+    /* ── Grouped view ── */
+    .group-root { padding: 4px 0; }
+
+    .group-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(147, 170, 201, 0.1);
+      transition: background 100ms ease;
+    }
+
+    .group-row:hover { background: rgba(44, 183, 161, 0.06); }
+    .group-row:hover .group-actions { opacity: 1; }
+
+    .group-toggle {
+      width: 12px;
+      flex-shrink: 0;
+      color: var(--muted);
+      font-size: 0.7rem;
+    }
+
+    .group-name {
+      flex: 1;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .group-count {
+      font-size: 0.7rem;
+      color: var(--muted);
+      background: rgba(147, 170, 201, 0.12);
+      border-radius: 999px;
+      padding: 1px 7px;
+      flex-shrink: 0;
+    }
+
+    .group-actions {
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 120ms ease;
+      flex-shrink: 0;
+    }
+
+    .group-action-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 0.8rem;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+
+    .group-action-btn:hover { color: var(--accent); background: rgba(44, 183, 161, 0.1); }
 
     /* ── Detail / Editor ── */
     .notes-detail {
@@ -233,6 +308,14 @@
       font-size: 0.93rem;
       color: var(--ink);
       white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .checklist-view {
+      line-height: 1.5;
+      font-size: 0.93rem;
+      color: var(--ink);
+      white-space: normal;
       word-break: break-word;
     }
 
@@ -383,7 +466,7 @@
 
     .note-editor textarea {
       resize: vertical;
-      min-height: 160px;
+      min-height: 360px;
       line-height: 1.6;
     }
 
@@ -471,6 +554,130 @@
       color: var(--muted);
     }
 
+    /* ── Checklist / Workflow ── */
+    .checklist-progress {
+      margin-bottom: 16px;
+    }
+
+    .checklist-progress-bar {
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(147, 170, 201, 0.15);
+      overflow: hidden;
+    }
+
+    .checklist-progress-fill {
+      height: 100%;
+      background: var(--accent);
+      transition: width 160ms ease;
+    }
+
+    .checklist-progress-label {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+
+    .checklist-group-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--ink);
+      margin: 14px 0 4px;
+    }
+
+    .checklist-group-title:first-child { margin-top: 0; }
+
+    .checklist-list {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .checklist-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 0 4px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .checklist-item:hover { background: rgba(44, 183, 161, 0.06); }
+
+    .checklist-item input[type="checkbox"] {
+      margin-top: 3px;
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .checklist-item-text {
+      font-size: 0.9rem;
+      color: var(--ink);
+      line-height: 1.3;
+    }
+
+    .checklist-item.is-done .checklist-item-text {
+      color: var(--muted);
+      text-decoration: line-through;
+    }
+
+    .checklist-text-line {
+      font-size: 0.88rem;
+      color: var(--muted);
+      margin: 4px 0;
+    }
+
+    .checklist-add-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .checklist-add-input {
+      flex: 1;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: var(--ink);
+      background: rgba(17, 29, 45, 0.8);
+      outline: none;
+      font-size: 0.86rem;
+    }
+
+    .checklist-add-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--ring);
+    }
+
+    .checklist-add-row .btn-add-step {
+      align-self: stretch;
+    }
+
+    .btn-add-step {
+      align-self: flex-start;
+      background: transparent;
+      color: var(--accent);
+      border: 1px dashed var(--accent);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-add-step:hover { background: rgba(44, 183, 161, 0.1); }
+
+    .checklist-hint {
+      font-size: 0.76rem;
+      color: var(--muted);
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
     @media (max-width: 700px) {
       .notes-layout {
         grid-template-columns: 1fr;
@@ -504,7 +711,11 @@
           <input id="notes-search" class="notes-search" type="search" placeholder="Suche in Notizen..." autocomplete="off" />
           <button id="notes-search-clear" class="search-clear hidden" type="button" aria-label="Suche leeren">X</button>
         </div>
-        <button id="btn-bookmark-notes" class="btn-bookmark-notes" type="button" aria-pressed="false">Lesezeichen-Notizen</button>
+        <div class="notes-sidebar-toggles">
+          <button id="btn-bookmark-notes" class="btn-bookmark-notes" type="button" aria-pressed="false">Lesezeichen-Notizen</button>
+          <button id="btn-tree-view" class="btn-bookmark-notes" type="button" aria-pressed="false">&#128193; Gruppen</button>
+        </div>
+        <button id="btn-new-group" class="btn-add-step hidden" type="button">+ Neue Gruppe</button>
         <button id="btn-new-note" class="btn-new-note" type="button">+ Neue Notiz</button>
       </div>
       <div id="notes-list" class="notes-list">

@@ -1,10 +1,13 @@
 // ── State ──────────────────────────────────────────────────────────────────
 let allNotes = [];
+let allNoteGroups = []; // user-defined note groups
 let allBookmarks = [];   // flat list from /api/state
 let activeNoteId = null;
 let isEditing = false;
 let searchDebounce = null;
 let bookmarkNotesOnly = false;
+let viewMode = "list"; // "list" | "groups"
+let expandedGroupKeys = new Set();
 let pendingBookmarkIds = []; // set when arriving from main page via URL param
 const decryptedVaultCache = new Map();
 
@@ -14,6 +17,8 @@ const els = {
   notesSearch:     document.getElementById("notes-search"),
   notesSearchClear:document.getElementById("notes-search-clear"),
   btnBookmarkNotes:document.getElementById("btn-bookmark-notes"),
+  btnTreeView:     document.getElementById("btn-tree-view"),
+  btnNewGroup:     document.getElementById("btn-new-group"),
   btnNewNote:      document.getElementById("btn-new-note"),
   detailHead:      document.getElementById("detail-head"),
   detailTitleLabel:document.getElementById("detail-title-label"),
@@ -30,12 +35,14 @@ init();
 async function init() {
   try {
     setStatus("Lade Daten…");
-    const [notesRes, stateRes] = await Promise.all([
+    const [notesRes, stateRes, groupsRes] = await Promise.all([
       request("/api/notes"),
       request("/api/state"),
+      request("/api/note-groups"),
     ]);
-    allNotes     = notesRes.notes || [];
-    allBookmarks = (stateRes.groups || []).flatMap(g => g.bookmarks || []);
+    allNotes      = notesRes.notes || [];
+    allBookmarks  = (stateRes.groups || []).flatMap(g => g.bookmarks || []);
+    allNoteGroups = groupsRes.note_groups || [];
     updateTitleCounter();
     renderFilteredList();
     setStatus("");
@@ -103,9 +110,15 @@ function appendNoteItem(n, bookmarkIdSet) {
     item.className = "note-item" + (n.id === activeNoteId ? " active" : "") + (hasOrphan ? " has-orphan" : "");
     item.dataset.id = n.id;
 
-    const preview = n.type === "vault"
-      ? "🔒 Verschlüsselte Vault-Notiz"
-      : (n.content || "").replace(/\n/g, " ").slice(0, 80);
+    let preview;
+    if (n.type === "vault") {
+      preview = "🔒 Verschlüsselte Vault-Notiz";
+    } else if (n.type === "checklist") {
+      const { done, total } = checklistProgress(n.content);
+      preview = total > 0 ? `${done}/${total} Schritte erledigt` : "Noch keine Schritte";
+    } else {
+      preview = (n.content || "").replace(/\n/g, " ").slice(0, 80);
+    }
 
     item.innerHTML = `
       <div class="note-item-title">${esc(n.title)}</div>
@@ -117,6 +130,142 @@ function appendNoteItem(n, bookmarkIdSet) {
     `;
     item.addEventListener("click", () => selectNote(n.id));
     els.notesList.appendChild(item);
+}
+
+function noteItemHtml(n, bookmarkIdSet) {
+  const hasOrphan = (n.bookmark_ids || []).some(id => !bookmarkIdSet.has(id));
+  let preview;
+  if (n.type === "vault") {
+    preview = "🔒 Verschlüsselte Vault-Notiz";
+  } else if (n.type === "checklist") {
+    const { done, total } = checklistProgress(n.content);
+    preview = total > 0 ? `${done}/${total} Schritte erledigt` : "Noch keine Schritte";
+  } else {
+    preview = (n.content || "").replace(/\n/g, " ").slice(0, 80);
+  }
+  return `
+    <div class="note-item${n.id === activeNoteId ? " active" : ""}${hasOrphan ? " has-orphan" : ""}" data-id="${n.id}">
+      <div class="note-item-title">${esc(n.title)}</div>
+      <div class="note-item-meta">
+        <span class="type-badge type-${esc(n.type)}">${typeLabel(n.type)}</span>
+        <span class="note-item-preview">${esc(preview)}</span>
+        <span class="note-item-date">${formatDate(n.updated_at)}</span>
+      </div>
+    </div>
+  `;
+}
+
+// ── Grouped view (user-defined note groups, ungrouped notes fall under "Unsortiert") ──
+function renderGroupedList(notes) {
+  els.notesList.innerHTML = "";
+  if (notes.length === 0) {
+    els.notesList.innerHTML = '<p class="notes-empty">Keine Notizen gefunden.</p>';
+    return;
+  }
+  const bookmarkIdSet = new Set(allBookmarks.map(b => b.id));
+  const byGroup = new Map();
+  const knownGroupIds = new Set(allNoteGroups.map(g => g.id));
+  for (const n of notes) {
+    const key = (n.group_id && knownGroupIds.has(n.group_id)) ? String(n.group_id) : "unsorted";
+    if (!byGroup.has(key)) byGroup.set(key, []);
+    byGroup.get(key).push(n);
+  }
+
+  const sections = [...allNoteGroups]
+    .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, "de"))
+    .map(g => ({ key: String(g.id), name: g.name, id: g.id, notes: byGroup.get(String(g.id)) || [] }));
+  sections.push({ key: "unsorted", name: "Unsortiert", id: null, notes: byGroup.get("unsorted") || [] });
+
+  els.notesList.innerHTML = `<div class="group-root">${sections.map(section => {
+    const isExpanded = expandedGroupKeys.has(section.key);
+    const actionsHtml = section.id
+      ? `<span class="group-actions">
+           <button type="button" class="group-action-btn" data-action="rename" data-id="${section.id}" title="Umbenennen">✎</button>
+           <button type="button" class="group-action-btn" data-action="delete" data-id="${section.id}" title="Löschen">✕</button>
+         </span>`
+      : "";
+    const leavesHtml = isExpanded
+      ? section.notes.map(n => noteItemHtml(n, bookmarkIdSet)).join("")
+      : "";
+    return `
+      <div class="group-row" data-key="${section.key}">
+        <span class="group-toggle">${isExpanded ? "▾" : "▸"}</span>
+        <span class="group-name">${esc(section.name)}</span>
+        <span class="group-count">${section.notes.length}</span>
+        ${actionsHtml}
+      </div>
+      ${leavesHtml}
+    `;
+  }).join("")}</div>`;
+
+  els.notesList.querySelectorAll(".group-row").forEach(row => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".group-action-btn")) return;
+      toggleGroupSection(row.dataset.key);
+    });
+  });
+  els.notesList.querySelectorAll(".note-item").forEach(item => {
+    item.addEventListener("click", () => selectNote(Number(item.dataset.id)));
+  });
+  els.notesList.querySelectorAll(".group-action-btn[data-action='rename']").forEach(btn => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); renameNoteGroup(Number(btn.dataset.id)); });
+  });
+  els.notesList.querySelectorAll(".group-action-btn[data-action='delete']").forEach(btn => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); deleteNoteGroup(Number(btn.dataset.id)); });
+  });
+}
+
+function toggleGroupSection(key) {
+  if (expandedGroupKeys.has(key)) expandedGroupKeys.delete(key);
+  else expandedGroupKeys.add(key);
+  renderFilteredList();
+}
+
+async function reloadNoteGroups() {
+  const res = await request("/api/note-groups");
+  allNoteGroups = res.note_groups || [];
+}
+
+async function createNoteGroup() {
+  const name = prompt("Name der neuen Gruppe:");
+  if (!name || !name.trim()) return;
+  try {
+    await request("/api/note-groups", { method: "POST", body: { name: name.trim() } });
+    await reloadNoteGroups();
+    renderFilteredList();
+  } catch (err) {
+    setStatus(err.message || "Fehler beim Anlegen der Gruppe.", true);
+  }
+}
+
+async function renameNoteGroup(groupId) {
+  const current = allNoteGroups.find(g => g.id === groupId);
+  const name = prompt("Neuer Name der Gruppe:", current?.name || "");
+  if (!name || !name.trim()) return;
+  try {
+    await request(`/api/note-groups/${groupId}`, {
+      method: "PUT",
+      body: { name: name.trim(), sort_order: current?.sort_order || 0 },
+    });
+    await reloadNoteGroups();
+    renderFilteredList();
+  } catch (err) {
+    setStatus(err.message || "Fehler beim Umbenennen der Gruppe.", true);
+  }
+}
+
+async function deleteNoteGroup(groupId) {
+  const current = allNoteGroups.find(g => g.id === groupId);
+  if (!confirm(`Gruppe "${current?.name || ""}" löschen? Enthaltene Notizen bleiben unter "Unsortiert" erhalten.`)) return;
+  try {
+    await request(`/api/note-groups/${groupId}`, { method: "DELETE" });
+    const [, notesRes] = await Promise.all([reloadNoteGroups(), request("/api/notes")]);
+    allNotes = notesRes.notes || [];
+    updateTitleCounter();
+    renderFilteredList();
+  } catch (err) {
+    setStatus(err.message || "Fehler beim Löschen der Gruppe.", true);
+  }
 }
 
 function getFilteredNotes() {
@@ -132,7 +281,12 @@ function getFilteredNotes() {
 }
 
 function renderFilteredList() {
-  renderList(getFilteredNotes());
+  const notes = getFilteredNotes();
+  if (viewMode === "groups") {
+    renderGroupedList(notes);
+  } else {
+    renderList(notes);
+  }
 }
 
 function renderTextNoteContent(content) {
@@ -150,6 +304,93 @@ function renderTextNoteContent(content) {
 
   html += esc(source.slice(lastIndex));
   return `${html}</div>`;
+}
+
+function renderChecklistView(note) {
+  const lines = parseChecklist(note.content);
+  const { done, total } = checklistProgress(note.content);
+  const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  const progressHtml = `
+    <div class="checklist-progress">
+      <div class="checklist-progress-bar">
+        <div class="checklist-progress-fill" style="width:${percent}%"></div>
+      </div>
+      <div class="checklist-progress-label">${done} von ${total} Schritten erledigt (${percent}%)</div>
+    </div>
+  `;
+
+  const addRowHtml = `
+    <form id="checklist-add-form" class="checklist-add-row">
+      <input type="text" id="checklist-new-item" class="checklist-add-input" placeholder="Neuer Schritt…" maxlength="300" autocomplete="off" />
+      <button type="submit" class="btn-add-step">+ Hinzufügen</button>
+    </form>
+  `;
+
+  // blank lines in the raw text intentionally have no visual effect; only "# heading" lines create grouping space
+  const bodyHtml = lines
+    .filter(line => line.kind !== "blank")
+    .map(renderChecklistLine)
+    .join("");
+
+  return `<div class="checklist-view">${progressHtml}${addRowHtml}<div class="checklist-list">${bodyHtml}</div></div>`;
+}
+
+function renderChecklistLine(line) {
+  if (line.kind === "heading") {
+    return `<div class="checklist-group-title">${esc(line.text)}</div>`;
+  }
+  if (line.kind === "item") {
+    return `
+      <label class="checklist-item${line.done ? " is-done" : ""}" data-line="${line.index}">
+        <input type="checkbox" ${line.done ? "checked" : ""} />
+        <span class="checklist-item-text">${esc(line.text)}</span>
+      </label>
+    `;
+  }
+  if (line.kind === "text") {
+    return `<div class="checklist-text-line">${esc(line.text)}</div>`;
+  }
+  return "";
+}
+
+function addChecklistItem(note, text) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const existing = String(note.content || "");
+  const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+  saveChecklistToggle(note, `${existing}${prefix}- [ ] ${trimmed}`);
+}
+
+function toggleChecklistLine(note, lineIndex) {
+  const lines = String(note.content || "").split("\n");
+  const line = lines[lineIndex];
+  if (line === undefined) return;
+  if (/^\s*-\s*\[x\]/i.test(line)) {
+    lines[lineIndex] = line.replace(/\[x\]/i, "[ ]");
+  } else if (/^\s*-\s*\[ \]/.test(line)) {
+    lines[lineIndex] = line.replace(/\[ \]/, "[x]");
+  } else {
+    return;
+  }
+  saveChecklistToggle(note, lines.join("\n"));
+}
+
+async function saveChecklistToggle(note, newContent) {
+  const previousContent = note.content;
+  note.content = newContent;
+  renderNoteView(note);
+  try {
+    await request(`/api/notes/${note.id}`, {
+      method: "PUT",
+      body: { title: note.title, content: newContent, type: note.type, group_id: note.group_id ?? null, tags: note.tags, bookmark_ids: note.bookmark_ids },
+    });
+    renderFilteredList();
+  } catch (err) {
+    note.content = previousContent;
+    renderNoteView(note);
+    setStatus(err.message || "Fehler beim Speichern des Schritts.", true);
+  }
 }
 
 // ── Select / view a note ──────────────────────────────────────────────────
@@ -187,6 +428,8 @@ function renderNoteView(note) {
     contentHtml = `<pre class="note-view-content is-code">${esc(note.content)}</pre>`;
   } else if (note.type === "note") {
     contentHtml = renderTextNoteContent(note.content);
+  } else if (note.type === "checklist") {
+    contentHtml = renderChecklistView(note);
   } else {
     contentHtml = `<div class="note-view-content">${esc(note.content)}</div>`;
   }
@@ -252,6 +495,23 @@ function renderNoteView(note) {
       }
     });
   }
+
+  if (note.type === "checklist") {
+    document.querySelectorAll(".checklist-item").forEach(el => {
+      el.addEventListener("click", (e) => {
+        e.preventDefault();
+        toggleChecklistLine(note, Number(el.dataset.line));
+      });
+    });
+
+    const addForm = document.getElementById("checklist-add-form");
+    const addInput = document.getElementById("checklist-new-item");
+    addForm?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      addChecklistItem(note, addInput.value);
+      document.getElementById("checklist-new-item")?.focus();
+    });
+  }
 }
 
 // ── Editor ────────────────────────────────────────────────────────────────
@@ -264,6 +524,12 @@ function openEditor(note, prefillTitle = "") {
   const content = note?.content || "";
   const type    = note?.type    || "note";
   const tags    = (note?.tags || []).join(", ");
+  const groupId = note?.group_id ?? "";
+  const checklistPlaceholder = "# Einarbeitung\n- [ ] Repository klonen\n- [ ] README lesen\n- [ ] Lokale Umgebung einrichten\n\n# Erste Schritte\n- [ ] Ansprechpartner kontaktieren\n- [ ] Ticket-System-Zugang einrichten";
+
+  const groupOptionsHtml = allNoteGroups
+    .map(g => `<option value="${g.id}" ${String(groupId) === String(g.id) ? "selected" : ""}>${esc(g.name)}</option>`)
+    .join("");
 
   els.detailBody.innerHTML = `
     <form id="note-editor-form" class="note-editor">
@@ -277,13 +543,25 @@ function openEditor(note, prefillTitle = "") {
           <option value="note"        ${type === "note"        ? "selected" : ""}>&#128221; Notiz</option>
           <option value="code"        ${type === "code"        ? "selected" : ""}>&#128187; Code-Schnipsel</option>
           <option value="annotation"  ${type === "annotation"  ? "selected" : ""}>&#128204; Anmerkung</option>
+          <option value="checklist"   ${type === "checklist"   ? "selected" : ""}>&#9989; Workflow / Checkliste</option>
           <option value="vault"       ${type === "vault"       ? "selected" : ""}>🔒 Vault</option>
         </select>
       </label>
       <label>
-        Inhalt
-        <textarea id="editor-content" class="${type === "code" ? "is-code" : ""}" placeholder="Inhalt der Notiz…">${esc(content)}</textarea>
+        Gruppe
+        <select id="editor-group">
+          <option value="" ${groupId === "" ? "selected" : ""}>Unsortiert</option>
+          ${groupOptionsHtml}
+        </select>
       </label>
+      <label>
+        Inhalt
+        <span id="editor-content-hint" class="checklist-hint${type === "checklist" ? "" : " hidden"}">
+          Zeile "# Abschnitt" für Überschriften, "- [ ] Schritt" für Aufgaben.
+        </span>
+        <textarea id="editor-content" class="${type === "code" ? "is-code" : ""}" placeholder="${type === "checklist" ? esc(checklistPlaceholder) : "Inhalt der Notiz…"}">${esc(content)}</textarea>
+      </label>
+      <button type="button" id="btn-add-step" class="btn-add-step ${type === "checklist" ? "" : "hidden"}">+ Schritt hinzufügen</button>
       <label id="vault-password-wrap" class="${type === "vault" ? "" : "hidden"}">
         Vault-Passwort
         <input id="editor-vault-password" type="password" placeholder="Passwort für Verschlüsselung" autocomplete="new-password" />
@@ -302,9 +580,21 @@ function openEditor(note, prefillTitle = "") {
   const typeSelect  = document.getElementById("editor-type");
   const contentArea = document.getElementById("editor-content");
   const vaultWrap   = document.getElementById("vault-password-wrap");
+  const contentHint = document.getElementById("editor-content-hint");
+  const addStepBtn  = document.getElementById("btn-add-step");
   typeSelect.addEventListener("change", () => {
     contentArea.classList.toggle("is-code", typeSelect.value === "code");
     vaultWrap.classList.toggle("hidden", typeSelect.value !== "vault");
+    const isChecklist = typeSelect.value === "checklist";
+    contentHint.classList.toggle("hidden", !isChecklist);
+    addStepBtn.classList.toggle("hidden", !isChecklist);
+    contentArea.placeholder = isChecklist ? checklistPlaceholder : "Inhalt der Notiz…";
+  });
+  addStepBtn.addEventListener("click", () => {
+    const prefix = contentArea.value && !contentArea.value.endsWith("\n") ? "\n" : "";
+    contentArea.value += `${prefix}- [ ] `;
+    contentArea.focus();
+    contentArea.selectionStart = contentArea.selectionEnd = contentArea.value.length;
   });
 
   document.getElementById("btn-cancel-edit").addEventListener("click", () => {
@@ -326,6 +616,8 @@ function openEditor(note, prefillTitle = "") {
 async function saveNote(existingId, existingBookmarkIds) {
   const title   = document.getElementById("editor-title").value.trim();
   const type    = document.getElementById("editor-type").value;
+  const groupRaw = document.getElementById("editor-group").value;
+  const groupId  = groupRaw === "" ? null : Number(groupRaw);
   let content   = document.getElementById("editor-content").value;
   const tagsRaw = document.getElementById("editor-tags").value;
   const tags    = tagsRaw.split(",").map(t => t.trim()).filter(Boolean);
@@ -347,7 +639,7 @@ async function saveNote(existingId, existingBookmarkIds) {
   // New note: use bookmark from URL param; existing note: preserve its links
   const bookmarkIds = existingId ? (existingBookmarkIds || []) : pendingBookmarkIds;
 
-  const body = { title, content, type, tags, bookmark_ids: bookmarkIds };
+  const body = { title, content, type, group_id: groupId, tags, bookmark_ids: bookmarkIds };
 
   try {
     setStatus("Speichere…");
@@ -461,6 +753,18 @@ els.btnBookmarkNotes.addEventListener("click", () => {
   renderFilteredList();
 });
 
+els.btnTreeView.addEventListener("click", () => {
+  viewMode = viewMode === "groups" ? "list" : "groups";
+  els.btnTreeView.classList.toggle("active", viewMode === "groups");
+  els.btnTreeView.setAttribute("aria-pressed", String(viewMode === "groups"));
+  els.btnNewGroup.classList.toggle("hidden", viewMode !== "groups");
+  renderFilteredList();
+});
+
+els.btnNewGroup.addEventListener("click", () => {
+  createNoteGroup();
+});
+
 els.notesSearchClear.addEventListener("click", () => {
   els.notesSearch.value = "";
   renderFilteredList();
@@ -487,8 +791,33 @@ function updateSearchClearButton() {
 }
 
 function typeLabel(type) {
-  const map = { note: "Notiz", code: "Code", annotation: "Anmerkung", vault: "Vault" };
+  const map = { note: "Notiz", code: "Code", annotation: "Anmerkung", vault: "Vault", checklist: "Workflow" };
   return map[type] || type;
+}
+
+// Parses simple checklist markup: "- [ ] text" / "- [x] text" items, "# text" group headings, rest as plain lines.
+function parseChecklist(content) {
+  const lines = String(content || "").split("\n");
+  return lines.map((line, index) => {
+    const trimmed = line.trim();
+    const itemMatch = trimmed.match(/^-\s*\[( |x|X)\]\s*(.*)$/);
+    if (itemMatch) {
+      return { index, kind: "item", done: itemMatch[1].toLowerCase() === "x", text: itemMatch[2] };
+    }
+    if (trimmed.startsWith("# ")) {
+      return { index, kind: "heading", text: trimmed.slice(2) };
+    }
+    if (trimmed === "") {
+      return { index, kind: "blank", text: "" };
+    }
+    return { index, kind: "text", text: trimmed };
+  });
+}
+
+function checklistProgress(content) {
+  const items = parseChecklist(content).filter(l => l.kind === "item");
+  const done = items.filter(i => i.done).length;
+  return { done, total: items.length };
 }
 
 async function encryptVaultContent(plainText, password) {

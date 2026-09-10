@@ -37,6 +37,12 @@ func initializeSchema(db *sql.DB) error {
 			FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE SET NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_bookmarks_group_id ON bookmarks(group_id);`,
+		`CREATE TABLE IF NOT EXISTS note_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);`,
 		`CREATE TABLE IF NOT EXISTS notes (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			title TEXT NOT NULL,
@@ -112,6 +118,7 @@ func initializeSchema(db *sql.DB) error {
 		`ALTER TABLE modules ADD COLUMN managed INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE modules ADD COLUMN installed_version TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE modules ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE notes ADD COLUMN group_id INTEGER NULL REFERENCES note_groups(id) ON DELETE SET NULL`,
 	}
 
 	for _, stmt := range migrations {
@@ -131,6 +138,13 @@ func initializeSchema(db *sql.DB) error {
 		return err
 	}
 	if _, err := db.Exec(`UPDATE bookmarks SET group_id = NULL WHERE group_id NOT IN (SELECT id FROM groups)`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_notes_group_id ON notes(group_id);`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE notes SET group_id = NULL WHERE group_id IS NOT NULL AND group_id NOT IN (SELECT id FROM note_groups)`); err != nil {
 		return err
 	}
 

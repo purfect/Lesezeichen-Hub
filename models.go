@@ -107,10 +107,18 @@ type note struct {
 	Title       string     `json:"title"`
 	Content     string     `json:"content"`
 	Type        string     `json:"type"`
+	GroupID     *int64     `json:"group_id,omitempty"`
 	BookmarkIDs []int64    `json:"bookmark_ids"`
 	Tags        []string   `json:"tags"`
 	CreatedAt   *time.Time `json:"created_at,omitempty"`
 	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+}
+
+type noteGroup struct {
+	ID        int64      `json:"id"`
+	Name      string     `json:"name"`
+	SortOrder int        `json:"sort_order"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
 
 type localModule struct {

@@ -70,6 +70,8 @@ func main() {
 	mux.HandleFunc("/api/bookmarks/", app.handleBookmarkRoutes)
 	mux.HandleFunc("/api/notes", app.handleNotes)
 	mux.HandleFunc("/api/notes/", app.handleNoteRoutes)
+	mux.HandleFunc("/api/note-groups", app.handleNoteGroups)
+	mux.HandleFunc("/api/note-groups/", app.handleNoteGroupRoutes)
 	mux.HandleFunc("/api/modules", app.handleModules)
 	mux.HandleFunc("/api/modules/", app.handleModuleRoutes)
 	mux.HandleFunc("/api/module-import", app.handleModuleImport)
@@ -88,7 +90,12 @@ func main() {
 	mux.HandleFunc("/api/redirect-inspector", app.handleHTTPInspect)
 	mux.HandleFunc("/silver-preise", app.handleSilverPricesPage)
 	mux.HandleFunc("/silberpreis-verlauf", app.handleSilverPriceHistoryPage)
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(webFS))))
+	// embed.FS reports a fixed zero ModTime, so If-Modified-Since would otherwise hide rebuilds behind stale 304s
+	staticHandler := http.StripPrefix("/static/", http.FileServer(http.FS(webFS)))
+	mux.Handle("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		staticHandler.ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)

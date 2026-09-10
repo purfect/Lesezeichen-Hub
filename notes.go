@@ -24,13 +24,13 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 		if q != "" {
 			like := "%" + q + "%"
 			rows, err = app.db.QueryContext(r.Context(),
-				`SELECT id, title, content, type, bookmark_ids, tags, created_at, updated_at
+				`SELECT id, title, content, type, group_id, bookmark_ids, tags, created_at, updated_at
 				 FROM notes WHERE title LIKE ? OR content LIKE ? OR tags LIKE ?
 				 ORDER BY updated_at DESC, id DESC`,
 				like, like, like)
 		} else {
 			rows, err = app.db.QueryContext(r.Context(),
-				`SELECT id, title, content, type, bookmark_ids, tags, created_at, updated_at
+				`SELECT id, title, content, type, group_id, bookmark_ids, tags, created_at, updated_at
 				 FROM notes ORDER BY updated_at DESC, id DESC`)
 		}
 		if err != nil {
@@ -43,9 +43,13 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var n note
 			var bmRaw, tagsRaw string
-			if err := rows.Scan(&n.ID, &n.Title, &n.Content, &n.Type, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			var groupID sql.NullInt64
+			if err := rows.Scan(&n.ID, &n.Title, &n.Content, &n.Type, &groupID, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
+			}
+			if groupID.Valid {
+				n.GroupID = &groupID.Int64
 			}
 			n.BookmarkIDs = parseBookmarkIDs(bmRaw)
 			n.Tags = parseTags(tagsRaw)
@@ -62,6 +66,7 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 			Title       string   `json:"title"`
 			Content     string   `json:"content"`
 			Type        string   `json:"type"`
+			GroupID     *int64   `json:"group_id"`
 			BookmarkIDs []int64  `json:"bookmark_ids"`
 			Tags        []string `json:"tags"`
 		}
@@ -75,14 +80,15 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		noteType := strings.TrimSpace(payload.Type)
-		if noteType != "note" && noteType != "code" && noteType != "annotation" && noteType != "vault" {
+		if noteType != "note" && noteType != "code" && noteType != "annotation" && noteType != "vault" && noteType != "checklist" {
 			noteType = "note"
 		}
 		res, err := app.db.ExecContext(r.Context(),
-			`INSERT INTO notes(title, content, type, bookmark_ids, tags) VALUES(?, ?, ?, ?, ?)`,
+			`INSERT INTO notes(title, content, type, group_id, bookmark_ids, tags) VALUES(?, ?, ?, ?, ?, ?)`,
 			title,
 			strings.TrimSpace(payload.Content),
 			noteType,
+			payload.GroupID,
 			serializeBookmarkIDs(payload.BookmarkIDs),
 			serializeTags(payload.Tags),
 		)
@@ -129,15 +135,19 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 	case http.MethodGet:
 		var n note
 		var bmRaw, tagsRaw string
+		var groupID sql.NullInt64
 		err := app.db.QueryRowContext(r.Context(),
-			`SELECT id, title, content, type, bookmark_ids, tags, created_at, updated_at FROM notes WHERE id = ?`, noteID).
-			Scan(&n.ID, &n.Title, &n.Content, &n.Type, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt)
+			`SELECT id, title, content, type, group_id, bookmark_ids, tags, created_at, updated_at FROM notes WHERE id = ?`, noteID).
+			Scan(&n.ID, &n.Title, &n.Content, &n.Type, &groupID, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, fmt.Errorf("notiz nicht gefunden"))
 			return
 		} else if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
+		}
+		if groupID.Valid {
+			n.GroupID = &groupID.Int64
 		}
 		n.BookmarkIDs = parseBookmarkIDs(bmRaw)
 		n.Tags = parseTags(tagsRaw)
@@ -148,6 +158,7 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 			Title       string   `json:"title"`
 			Content     string   `json:"content"`
 			Type        string   `json:"type"`
+			GroupID     *int64   `json:"group_id"`
 			BookmarkIDs []int64  `json:"bookmark_ids"`
 			Tags        []string `json:"tags"`
 		}
@@ -161,14 +172,15 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		noteType := strings.TrimSpace(payload.Type)
-		if noteType != "note" && noteType != "code" && noteType != "annotation" && noteType != "vault" {
+		if noteType != "note" && noteType != "code" && noteType != "annotation" && noteType != "vault" && noteType != "checklist" {
 			noteType = "note"
 		}
 		res, err := app.db.ExecContext(r.Context(),
-			`UPDATE notes SET title = ?, content = ?, type = ?, bookmark_ids = ?, tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			`UPDATE notes SET title = ?, content = ?, type = ?, group_id = ?, bookmark_ids = ?, tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			title,
 			strings.TrimSpace(payload.Content),
 			noteType,
+			payload.GroupID,
 			serializeBookmarkIDs(payload.BookmarkIDs),
 			serializeTags(payload.Tags),
 			noteID,
@@ -193,6 +205,129 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 		affected, _ := res.RowsAffected()
 		if affected == 0 {
 			writeErr(w, http.StatusNotFound, fmt.Errorf("notiz nicht gefunden"))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (app *application) handleNoteGroups(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		rows, err := app.db.QueryContext(r.Context(), `SELECT id, name, sort_order, created_at FROM note_groups ORDER BY sort_order ASC, name ASC`)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer rows.Close()
+
+		items := make([]noteGroup, 0)
+		for rows.Next() {
+			var g noteGroup
+			if err := rows.Scan(&g.ID, &g.Name, &g.SortOrder, &g.CreatedAt); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			items = append(items, g)
+		}
+		if err := rows.Err(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"note_groups": items})
+
+	case http.MethodPost:
+		var payload struct {
+			Name      string `json:"name"`
+			SortOrder int    `json:"sort_order"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
+			return
+		}
+		name := strings.TrimSpace(payload.Name)
+		if name == "" {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("name ist erforderlich"))
+			return
+		}
+		res, err := app.db.ExecContext(r.Context(),
+			`INSERT INTO note_groups(name, sort_order) VALUES(?, ?)`, name, payload.SortOrder)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		id, _ := res.LastInsertId()
+		writeJSON(w, http.StatusCreated, map[string]any{"id": id})
+
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (app *application) handleNoteGroupRoutes(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/note-groups/"), "/")
+	groupID, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || groupID <= 0 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltige gruppen-id"))
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		var payload struct {
+			Name      string `json:"name"`
+			SortOrder int    `json:"sort_order"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
+			return
+		}
+		name := strings.TrimSpace(payload.Name)
+		if name == "" {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("name ist erforderlich"))
+			return
+		}
+		res, err := app.db.ExecContext(r.Context(),
+			`UPDATE note_groups SET name = ?, sort_order = ? WHERE id = ?`, name, payload.SortOrder, groupID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("gruppe nicht gefunden"))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+
+	case http.MethodDelete:
+		tx, err := app.db.BeginTx(r.Context(), nil)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer tx.Rollback()
+
+		// deleting a group ungroups its notes instead of deleting them
+		if _, err := tx.ExecContext(r.Context(), `UPDATE notes SET group_id = NULL WHERE group_id = ?`, groupID); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		res, err := tx.ExecContext(r.Context(), `DELETE FROM note_groups WHERE id = ?`, groupID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("gruppe nicht gefunden"))
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
