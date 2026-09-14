@@ -12,6 +12,7 @@ Die Anwendung laeuft komplett lokal, bietet Gruppen, Tags, Favoriten, Wiedervorl
 
 *Dieselbe Ansicht im optionalen ASCII-Monitor-Design.*
 
+
 ## Highlights
 
 - Gruppen fuer saubere Struktur
