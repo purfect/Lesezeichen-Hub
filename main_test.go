@@ -70,6 +70,37 @@ func TestValidateURL(t *testing.T) {
 	}
 }
 
+func TestHandleNotesSearchMatchesAllTerms(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notes(title, content, tags) VALUES
+			('Go Notizen', 'SQLite Suche', 'backend,technik'),
+			('Go Einkauf', 'Milch und Brot', 'privat')`); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &application{db: db}
+	request := httptest.NewRequest(http.MethodGet, "/api/notes?q=go%20sqlite", nil)
+	response := httptest.NewRecorder()
+	app.handleNotes(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	var payload struct {
+		Notes []note `json:"notes"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Notes) != 1 || payload.Notes[0].Title != "Go Notizen" {
+		t.Fatalf("notes = %#v, want only Go Notizen", payload.Notes)
+	}
+}
+
 func TestPublicHTTPURL(t *testing.T) {
 	tests := []struct {
 		value string

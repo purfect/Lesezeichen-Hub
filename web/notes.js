@@ -269,13 +269,15 @@ async function deleteNoteGroup(groupId) {
 }
 
 function getFilteredNotes() {
-  const query = els.notesSearch.value.trim().toLowerCase();
+  const terms = els.notesSearch.value.trim().toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
   return allNotes.filter(note => {
     const matchesBookmarkFilter = !bookmarkNotesOnly || (note.bookmark_ids || []).length > 0;
-    const matchesSearch = !query ||
-      note.title.toLowerCase().includes(query) ||
-      (note.content || "").toLowerCase().includes(query) ||
-      (note.tags || []).some(tag => tag.toLowerCase().includes(query));
+    const searchableText = [note.title, note.content || "", ...(note.tags || [])]
+      .join(" ")
+      .toLowerCase();
+    const matchesSearch = terms.every(term => searchableText.includes(term));
     return matchesBookmarkFilter && matchesSearch;
   });
 }

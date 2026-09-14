@@ -22,12 +22,18 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 		var rows *sql.Rows
 		var err error
 		if q != "" {
-			like := "%" + q + "%"
-			rows, err = app.db.QueryContext(r.Context(),
-				`SELECT id, title, content, type, group_id, bookmark_ids, tags, created_at, updated_at
-				 FROM notes WHERE title LIKE ? OR content LIKE ? OR tags LIKE ?
-				 ORDER BY updated_at DESC, id DESC`,
-				like, like, like)
+			terms := strings.Fields(q)
+			conditions := make([]string, 0, len(terms))
+			args := make([]any, 0, len(terms)*3)
+			for _, term := range terms {
+				conditions = append(conditions, "(title LIKE ? OR content LIKE ? OR tags LIKE ?)")
+				like := "%" + term + "%"
+				args = append(args, like, like, like)
+			}
+			query := `SELECT id, title, content, type, group_id, bookmark_ids, tags, created_at, updated_at
+				FROM notes WHERE ` + strings.Join(conditions, " AND ") + `
+				ORDER BY updated_at DESC, id DESC`
+			rows, err = app.db.QueryContext(r.Context(), query, args...)
 		} else {
 			rows, err = app.db.QueryContext(r.Context(),
 				`SELECT id, title, content, type, group_id, bookmark_ids, tags, created_at, updated_at
