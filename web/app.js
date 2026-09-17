@@ -1107,6 +1107,7 @@ function render() {
       const pinBtn = item.querySelector(".toggle-pin");
       const favBtn = item.querySelector(".toggle-favorite");
       const archiveBtn = item.querySelector(".toggle-archive");
+      item.querySelector(".copy-bookmark-link").addEventListener("click", () => copyBookmarkLink(bookmark.url));
       pinBtn.classList.toggle("active", Boolean(bookmark.pinned));
       favBtn.classList.toggle("active", Boolean(bookmark.favorite));
       archiveBtn.classList.toggle("active", Boolean(bookmark.archived));
@@ -1927,6 +1928,27 @@ function escapeHTML(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+async function copyBookmarkLink(url) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = url;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      textarea.remove();
+      if (!copied) throw new Error("Kopieren nicht möglich.");
+    }
+    setStatus("Link in die Zwischenablage kopiert.");
+  } catch (_) {
+    setStatus("Link konnte nicht kopiert werden.", true);
+  }
 }
 
 function setStatus(message, isError = false) {
