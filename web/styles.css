@@ -1073,6 +1073,45 @@ button.danger:hover {
   font-size: 1.02rem;
 }
 
+.recent-bookmarks-card {
+  grid-column: 1 / -1;
+}
+
+.recent-bookmarks-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px 18px;
+}
+
+.recent-bookmarks-list li {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(126, 208, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(10, 19, 31, 0.42);
+}
+
+.recent-bookmarks-list a,
+.recent-bookmarks-list span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-bookmarks-list span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.recent-bookmarks-list .recent-bookmarks-empty {
+  color: var(--muted);
+}
+
 .simple-list {
   margin: 0;
   padding-left: 20px;

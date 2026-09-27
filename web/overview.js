@@ -1,5 +1,6 @@
 const els = {
   statsGrid: document.getElementById("stats-grid"),
+  recentBookmarks: document.getElementById("recent-bookmarks"),
   largestGroups: document.getElementById("largest-groups"),
   topTags: document.getElementById("top-tags"),
   reminderSummary: document.getElementById("reminder-summary"),
@@ -75,10 +76,61 @@ function renderOverview(groups) {
   }
 
   renderLargestGroups(groups);
+  renderRecentBookmarks(groups);
   renderTopTags(allTags);
   renderRemindersSummary(reminders.length, dueSoon, overdue);
   renderArchiveSummary(groups, archived, active, archiveRatio);
   renderUsageSummary(bookmarks, totalOpens);
+}
+
+function renderRecentBookmarks(groups) {
+  const recent = groups
+    .flatMap((group) => (group.bookmarks || []).map((bookmark) => ({
+      ...bookmark,
+      groupName: group.name || "Unbenannt",
+    })))
+    .sort((a, b) => {
+      const dateDifference = getBookmarkTimestamp(b.created_at) - getBookmarkTimestamp(a.created_at);
+      return dateDifference || Number(b.id || 0) - Number(a.id || 0);
+    })
+    .slice(0, 10);
+
+  els.recentBookmarks.innerHTML = "";
+
+  if (recent.length === 0) {
+    const li = document.createElement("li");
+    li.className = "recent-bookmarks-empty";
+    li.textContent = "Noch keine Lesezeichen vorhanden.";
+    els.recentBookmarks.appendChild(li);
+    return;
+  }
+
+  for (const bookmark of recent) {
+    const li = document.createElement("li");
+
+    const link = document.createElement("a");
+    link.className = "bookmark-link";
+    link.href = `/api/bookmarks/${bookmark.id}/open`;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = bookmark.title || bookmark.url;
+
+    const meta = document.createElement("span");
+    const createdAt = parseBookmarkDate(bookmark.created_at);
+    const dateLabel = createdAt
+      ? createdAt.toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" })
+      : "Datum unbekannt";
+    meta.textContent = `${bookmark.groupName} · ${dateLabel}`;
+
+    li.appendChild(link);
+    li.appendChild(meta);
+    els.recentBookmarks.appendChild(li);
+  }
+}
+
+function getBookmarkTimestamp(rawValue) {
+  const date = parseBookmarkDate(rawValue);
+  return date ? date.getTime() : 0;
 }
 
 function renderUsageSummary(bookmarks, totalOpens) {
