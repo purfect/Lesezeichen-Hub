@@ -1182,7 +1182,9 @@ function renderFavoritesQuickbar() {
     link.href = `/api/bookmarks/${bookmark.id}/open`;
     link.target = "_blank";
     link.rel = "noreferrer";
-    link.title = `${bookmark.title} (${bookmark.groupName})`;
+    const label = `${bookmark.title} (${bookmark.groupName})`;
+    link.title = label;
+    link.setAttribute("aria-label", label);
     link.textContent = bookmark.title;
     if (bookmark.pinned) {
       link.classList.add("is-pinned");
