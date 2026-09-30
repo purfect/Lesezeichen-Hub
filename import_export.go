@@ -330,7 +330,7 @@ func (app *application) handleBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := app.db.QueryContext(r.Context(),
-		`SELECT title, content, type, bookmark_ids, tags FROM notes ORDER BY id ASC`)
+		`SELECT title, content, type, links_clickable, bookmark_ids, tags FROM notes ORDER BY id ASC`)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -341,7 +341,8 @@ func (app *application) handleBackup(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var n backupNote
 		var bmRaw, tagsRaw string
-		if err := rows.Scan(&n.Title, &n.Content, &n.Type, &bmRaw, &tagsRaw); err != nil {
+		var linksClickable bool
+		if err := rows.Scan(&n.Title, &n.Content, &n.Type, &linksClickable, &bmRaw, &tagsRaw); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -350,6 +351,7 @@ func (app *application) handleBackup(w http.ResponseWriter, r *http.Request) {
 		}
 		n.BookmarkIDs = parseBookmarkIDs(bmRaw)
 		n.Tags = parseTags(tagsRaw)
+		n.LinksClickable = &linksClickable
 		bkNotes = append(bkNotes, n)
 	}
 	if err := rows.Err(); err != nil {
@@ -524,14 +526,18 @@ func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
 
 		bmRaw := serializeBookmarkIDs(remapped)
 		tagsRaw := serializeTags(n.Tags)
+		linksClickable := true
+		if n.LinksClickable != nil {
+			linksClickable = *n.LinksClickable
+		}
 
 		var existingID int64
 		err := tx.QueryRowContext(r.Context(),
 			`SELECT id FROM notes WHERE title = ? LIMIT 1`, title).Scan(&existingID)
 		if errors.Is(err, sql.ErrNoRows) {
 			_, err = tx.ExecContext(r.Context(),
-				`INSERT INTO notes(title, content, type, bookmark_ids, tags) VALUES(?, ?, ?, ?, ?)`,
-				title, strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw)
+				`INSERT INTO notes(title, content, type, bookmark_ids, tags, links_clickable) VALUES(?, ?, ?, ?, ?, ?)`,
+				title, strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw, boolToInt(linksClickable))
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
@@ -542,8 +548,8 @@ func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		} else if conflictStrategy == "overwrite" {
 			_, _ = tx.ExecContext(r.Context(),
-				`UPDATE notes SET content = ?, type = ?, bookmark_ids = ?, tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-				strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw, existingID)
+				`UPDATE notes SET content = ?, type = ?, bookmark_ids = ?, tags = ?, links_clickable = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw, boolToInt(linksClickable), existingID)
 			updatedNotes++
 		}
 	}

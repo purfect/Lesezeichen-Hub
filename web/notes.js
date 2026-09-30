@@ -291,7 +291,7 @@ function renderFilteredList() {
   }
 }
 
-function renderTextNoteContent(content) {
+function renderTextNoteContent(content, linksClickable = false) {
   const codeBlockPattern = /\{code\}([\s\S]*?)\{code\}/g;
   const source = String(content || "");
   let lastIndex = 0;
@@ -299,12 +299,13 @@ function renderTextNoteContent(content) {
   let html = '<div class="note-view-content">';
 
   while ((match = codeBlockPattern.exec(source)) !== null) {
-    html += esc(source.slice(lastIndex, match.index));
+    const text = source.slice(lastIndex, match.index);
+    html += linksClickable ? linkifyText(text) : esc(text);
     html += `</div><pre class="note-view-code-block">${esc(match[1])}</pre><div class="note-view-content">`;
     lastIndex = match.index + match[0].length;
   }
 
-  html += esc(source.slice(lastIndex));
+  html += linksClickable ? linkifyText(source.slice(lastIndex)) : esc(source.slice(lastIndex));
   return `${html}</div>`;
 }
 
@@ -332,26 +333,26 @@ function renderChecklistView(note) {
   // blank lines in the raw text intentionally have no visual effect; only "# heading" lines create grouping space
   const bodyHtml = lines
     .filter(line => line.kind !== "blank")
-    .map(renderChecklistLine)
+    .map(line => renderChecklistLine(line, note.links_clickable !== false))
     .join("");
 
   return `<div class="checklist-view">${progressHtml}${addRowHtml}<div class="checklist-list">${bodyHtml}</div></div>`;
 }
 
-function renderChecklistLine(line) {
+function renderChecklistLine(line, linksClickable) {
   if (line.kind === "heading") {
-    return `<div class="checklist-group-title">${esc(line.text)}</div>`;
+    return `<div class="checklist-group-title">${linksClickable ? linkifyText(line.text) : esc(line.text)}</div>`;
   }
   if (line.kind === "item") {
     return `
       <label class="checklist-item${line.done ? " is-done" : ""}" data-line="${line.index}">
         <input type="checkbox" ${line.done ? "checked" : ""} />
-        <span class="checklist-item-text">${esc(line.text)}</span>
+        <span class="checklist-item-text">${linksClickable ? linkifyText(line.text) : esc(line.text)}</span>
       </label>
     `;
   }
   if (line.kind === "text") {
-    return `<div class="checklist-text-line">${esc(line.text)}</div>`;
+    return `<div class="checklist-text-line">${linksClickable ? linkifyText(line.text) : esc(line.text)}</div>`;
   }
   return "";
 }
@@ -385,7 +386,7 @@ async function saveChecklistToggle(note, newContent) {
   try {
     await request(`/api/notes/${note.id}`, {
       method: "PUT",
-      body: { title: note.title, content: newContent, type: note.type, group_id: note.group_id ?? null, tags: note.tags, bookmark_ids: note.bookmark_ids },
+      body: { title: note.title, content: newContent, type: note.type, group_id: note.group_id ?? null, tags: note.tags, bookmark_ids: note.bookmark_ids, links_clickable: note.links_clickable !== false },
     });
     renderFilteredList();
   } catch (err) {
@@ -429,11 +430,12 @@ function renderNoteView(note) {
   } else if (note.type === "code") {
     contentHtml = `<pre class="note-view-content is-code">${esc(note.content)}</pre>`;
   } else if (note.type === "note") {
-    contentHtml = renderTextNoteContent(note.content);
+    contentHtml = renderTextNoteContent(note.content, note.links_clickable !== false);
   } else if (note.type === "checklist") {
     contentHtml = renderChecklistView(note);
   } else {
-    contentHtml = `<div class="note-view-content">${esc(note.content)}</div>`;
+    const content = note.links_clickable !== false ? linkifyText(note.content) : esc(note.content);
+    contentHtml = `<div class="note-view-content">${content}</div>`;
   }
 
   const tagsHtml = (note.tags || []).length > 0
@@ -501,6 +503,7 @@ function renderNoteView(note) {
   if (note.type === "checklist") {
     document.querySelectorAll(".checklist-item").forEach(el => {
       el.addEventListener("click", (e) => {
+        if (e.target.closest("a")) return;
         e.preventDefault();
         toggleChecklistLine(note, Number(el.dataset.line));
       });
@@ -527,6 +530,7 @@ function openEditor(note, prefillTitle = "") {
   const type    = note?.type    || "note";
   const tags    = (note?.tags || []).join(", ");
   const groupId = note?.group_id ?? "";
+  const linksClickable = note?.links_clickable !== false;
   const checklistPlaceholder = "# Einarbeitung\n- [ ] Repository klonen\n- [ ] README lesen\n- [ ] Lokale Umgebung einrichten\n\n# Erste Schritte\n- [ ] Ansprechpartner kontaktieren\n- [ ] Ticket-System-Zugang einrichten";
 
   const groupOptionsHtml = allNoteGroups
@@ -563,6 +567,10 @@ function openEditor(note, prefillTitle = "") {
         </span>
         <textarea id="editor-content" class="${type === "code" ? "is-code" : ""}" placeholder="${type === "checklist" ? esc(checklistPlaceholder) : "Inhalt der Notiz…"}">${esc(content)}</textarea>
       </label>
+      <label id="editor-links-clickable-wrap" class="note-editor-checkbox${type === "code" || type === "vault" ? " hidden" : ""}">
+        <input id="editor-links-clickable" type="checkbox" ${linksClickable ? "checked" : ""} />
+        URLs in Text- und Checklisten-Notizen klickbar machen
+      </label>
       <button type="button" id="btn-add-step" class="btn-add-step ${type === "checklist" ? "" : "hidden"}">+ Schritt hinzufügen</button>
       <label id="vault-password-wrap" class="${type === "vault" ? "" : "hidden"}">
         Vault-Passwort
@@ -582,11 +590,13 @@ function openEditor(note, prefillTitle = "") {
   const typeSelect  = document.getElementById("editor-type");
   const contentArea = document.getElementById("editor-content");
   const vaultWrap   = document.getElementById("vault-password-wrap");
+  const linksClickableWrap = document.getElementById("editor-links-clickable-wrap");
   const contentHint = document.getElementById("editor-content-hint");
   const addStepBtn  = document.getElementById("btn-add-step");
   typeSelect.addEventListener("change", () => {
     contentArea.classList.toggle("is-code", typeSelect.value === "code");
     vaultWrap.classList.toggle("hidden", typeSelect.value !== "vault");
+    linksClickableWrap.classList.toggle("hidden", typeSelect.value === "code" || typeSelect.value === "vault");
     const isChecklist = typeSelect.value === "checklist";
     contentHint.classList.toggle("hidden", !isChecklist);
     addStepBtn.classList.toggle("hidden", !isChecklist);
@@ -623,6 +633,7 @@ async function saveNote(existingId, existingBookmarkIds) {
   let content   = document.getElementById("editor-content").value;
   const tagsRaw = document.getElementById("editor-tags").value;
   const tags    = tagsRaw.split(",").map(t => t.trim()).filter(Boolean);
+  const linksClickable = document.getElementById("editor-links-clickable").checked;
 
   if (type === "vault") {
     const password = document.getElementById("editor-vault-password")?.value || "";
@@ -641,7 +652,7 @@ async function saveNote(existingId, existingBookmarkIds) {
   // New note: use bookmark from URL param; existing note: preserve its links
   const bookmarkIds = existingId ? (existingBookmarkIds || []) : pendingBookmarkIds;
 
-  const body = { title, content, type, group_id: groupId, tags, bookmark_ids: bookmarkIds };
+  const body = { title, content, type, group_id: groupId, tags, bookmark_ids: bookmarkIds, links_clickable: linksClickable };
 
   try {
     setStatus("Speichere…");
@@ -897,6 +908,36 @@ function esc(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function linkifyText(text) {
+  const urlPattern = /https?:\/\/[^\s<>"']+/gi;
+  let html = "";
+  let lastIndex = 0;
+  let match;
+
+  while ((match = urlPattern.exec(String(text || ""))) !== null) {
+    let url = match[0];
+    let trailing = "";
+    while (/[.,!?;:)\]}]$/.test(url)) {
+      trailing = url.slice(-1) + trailing;
+      url = url.slice(0, -1);
+    }
+    let isSafeURL = false;
+    try {
+      const parsed = new URL(url);
+      isSafeURL = parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      // Leave malformed URL candidates as escaped text.
+    }
+    if (url && isSafeURL) {
+      html += esc(String(text).slice(lastIndex, match.index));
+      html += `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>${esc(trailing)}`;
+      lastIndex = match.index + match[0].length;
+    }
+  }
+
+  return html + esc(String(text || "").slice(lastIndex));
 }
 
 function formatDate(iso) {

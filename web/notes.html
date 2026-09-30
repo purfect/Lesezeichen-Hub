@@ -441,6 +441,23 @@
       letter-spacing: 0.06em;
     }
 
+    .note-editor label.note-editor-checkbox {
+      flex-direction: row;
+      align-items: center;
+      gap: 9px;
+      text-transform: none;
+      letter-spacing: 0;
+      cursor: pointer;
+    }
+
+    .note-editor label.note-editor-checkbox.hidden { display: none; }
+
+    .note-editor label.note-editor-checkbox input {
+      width: auto;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+
     #vault-password-wrap.hidden { display: none; }
 
     .note-editor input,

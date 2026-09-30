@@ -30,13 +30,13 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 				like := "%" + term + "%"
 				args = append(args, like, like, like)
 			}
-			query := `SELECT id, title, content, type, group_id, bookmark_ids, tags, created_at, updated_at
+			query := `SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, created_at, updated_at
 				FROM notes WHERE ` + strings.Join(conditions, " AND ") + `
 				ORDER BY updated_at DESC, id DESC`
 			rows, err = app.db.QueryContext(r.Context(), query, args...)
 		} else {
 			rows, err = app.db.QueryContext(r.Context(),
-				`SELECT id, title, content, type, group_id, bookmark_ids, tags, created_at, updated_at
+				`SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, created_at, updated_at
 				 FROM notes ORDER BY updated_at DESC, id DESC`)
 		}
 		if err != nil {
@@ -49,11 +49,13 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var n note
 			var bmRaw, tagsRaw string
+			var linksClickable int
 			var groupID sql.NullInt64
-			if err := rows.Scan(&n.ID, &n.Title, &n.Content, &n.Type, &groupID, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			if err := rows.Scan(&n.ID, &n.Title, &n.Content, &n.Type, &linksClickable, &groupID, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
+			n.LinksClickable = linksClickable != 0
 			if groupID.Valid {
 				n.GroupID = &groupID.Int64
 			}
@@ -69,12 +71,13 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var payload struct {
-			Title       string   `json:"title"`
-			Content     string   `json:"content"`
-			Type        string   `json:"type"`
-			GroupID     *int64   `json:"group_id"`
-			BookmarkIDs []int64  `json:"bookmark_ids"`
-			Tags        []string `json:"tags"`
+			Title          string   `json:"title"`
+			Content        string   `json:"content"`
+			Type           string   `json:"type"`
+			GroupID        *int64   `json:"group_id"`
+			BookmarkIDs    []int64  `json:"bookmark_ids"`
+			Tags           []string `json:"tags"`
+			LinksClickable *bool    `json:"links_clickable"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
@@ -89,14 +92,19 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 		if noteType != "note" && noteType != "code" && noteType != "annotation" && noteType != "vault" && noteType != "checklist" {
 			noteType = "note"
 		}
+		linksClickable := true
+		if payload.LinksClickable != nil {
+			linksClickable = *payload.LinksClickable
+		}
 		res, err := app.db.ExecContext(r.Context(),
-			`INSERT INTO notes(title, content, type, group_id, bookmark_ids, tags) VALUES(?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO notes(title, content, type, group_id, bookmark_ids, tags, links_clickable) VALUES(?, ?, ?, ?, ?, ?, ?)`,
 			title,
 			strings.TrimSpace(payload.Content),
 			noteType,
 			payload.GroupID,
 			serializeBookmarkIDs(payload.BookmarkIDs),
 			serializeTags(payload.Tags),
+			boolToInt(linksClickable),
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
@@ -141,10 +149,11 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 	case http.MethodGet:
 		var n note
 		var bmRaw, tagsRaw string
+		var linksClickable int
 		var groupID sql.NullInt64
 		err := app.db.QueryRowContext(r.Context(),
-			`SELECT id, title, content, type, group_id, bookmark_ids, tags, created_at, updated_at FROM notes WHERE id = ?`, noteID).
-			Scan(&n.ID, &n.Title, &n.Content, &n.Type, &groupID, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt)
+			`SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, created_at, updated_at FROM notes WHERE id = ?`, noteID).
+			Scan(&n.ID, &n.Title, &n.Content, &n.Type, &linksClickable, &groupID, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, fmt.Errorf("notiz nicht gefunden"))
 			return
@@ -155,18 +164,20 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 		if groupID.Valid {
 			n.GroupID = &groupID.Int64
 		}
+		n.LinksClickable = linksClickable != 0
 		n.BookmarkIDs = parseBookmarkIDs(bmRaw)
 		n.Tags = parseTags(tagsRaw)
 		writeJSON(w, http.StatusOK, n)
 
 	case http.MethodPut:
 		var payload struct {
-			Title       string   `json:"title"`
-			Content     string   `json:"content"`
-			Type        string   `json:"type"`
-			GroupID     *int64   `json:"group_id"`
-			BookmarkIDs []int64  `json:"bookmark_ids"`
-			Tags        []string `json:"tags"`
+			Title          string   `json:"title"`
+			Content        string   `json:"content"`
+			Type           string   `json:"type"`
+			GroupID        *int64   `json:"group_id"`
+			BookmarkIDs    []int64  `json:"bookmark_ids"`
+			Tags           []string `json:"tags"`
+			LinksClickable *bool    `json:"links_clickable"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
@@ -181,14 +192,26 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 		if noteType != "note" && noteType != "code" && noteType != "annotation" && noteType != "vault" && noteType != "checklist" {
 			noteType = "note"
 		}
+		var linksClickable bool
+		if payload.LinksClickable != nil {
+			linksClickable = *payload.LinksClickable
+		} else if err := app.db.QueryRowContext(r.Context(), `SELECT links_clickable FROM notes WHERE id = ?`, noteID).Scan(&linksClickable); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeErr(w, http.StatusNotFound, fmt.Errorf("notiz nicht gefunden"))
+			} else {
+				writeErr(w, http.StatusInternalServerError, err)
+			}
+			return
+		}
 		res, err := app.db.ExecContext(r.Context(),
-			`UPDATE notes SET title = ?, content = ?, type = ?, group_id = ?, bookmark_ids = ?, tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			`UPDATE notes SET title = ?, content = ?, type = ?, group_id = ?, bookmark_ids = ?, tags = ?, links_clickable = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			title,
 			strings.TrimSpace(payload.Content),
 			noteType,
 			payload.GroupID,
 			serializeBookmarkIDs(payload.BookmarkIDs),
 			serializeTags(payload.Tags),
+			boolToInt(linksClickable),
 			noteID,
 		)
 		if err != nil {

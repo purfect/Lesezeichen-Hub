@@ -103,15 +103,16 @@ type bookmark struct {
 }
 
 type note struct {
-	ID          int64      `json:"id"`
-	Title       string     `json:"title"`
-	Content     string     `json:"content"`
-	Type        string     `json:"type"`
-	GroupID     *int64     `json:"group_id,omitempty"`
-	BookmarkIDs []int64    `json:"bookmark_ids"`
-	Tags        []string   `json:"tags"`
-	CreatedAt   *time.Time `json:"created_at,omitempty"`
-	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+	ID             int64      `json:"id"`
+	Title          string     `json:"title"`
+	Content        string     `json:"content"`
+	Type           string     `json:"type"`
+	LinksClickable bool       `json:"links_clickable"`
+	GroupID        *int64     `json:"group_id,omitempty"`
+	BookmarkIDs    []int64    `json:"bookmark_ids"`
+	Tags           []string   `json:"tags"`
+	CreatedAt      *time.Time `json:"created_at,omitempty"`
+	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
 }
 
 type noteGroup struct {
@@ -257,11 +258,12 @@ type backupBookmark struct {
 }
 
 type backupNote struct {
-	Title       string   `json:"title"`
-	Content     string   `json:"content"`
-	Type        string   `json:"type"`
-	BookmarkIDs []int64  `json:"bookmark_ids"`
-	Tags        []string `json:"tags"`
+	Title          string   `json:"title"`
+	Content        string   `json:"content"`
+	Type           string   `json:"type"`
+	LinksClickable *bool    `json:"links_clickable,omitempty"`
+	BookmarkIDs    []int64  `json:"bookmark_ids"`
+	Tags           []string `json:"tags"`
 }
 
 type restorePreview struct {

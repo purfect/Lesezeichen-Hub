@@ -101,6 +101,65 @@ func TestHandleNotesSearchMatchesAllTerms(t *testing.T) {
 	}
 }
 
+func TestHandleNotesLinksClickableRoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	app := &application{db: db}
+
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/notes", strings.NewReader(`{"title":"Links","content":"https://example.com"}`))
+	createResponse := httptest.NewRecorder()
+	app.handleNotes(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d: %s", createResponse.Code, http.StatusCreated, createResponse.Body.String())
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(createResponse.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+
+	getNote := func() note {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/api/notes/"+strconv.FormatInt(created.ID, 10), nil)
+		response := httptest.NewRecorder()
+		app.handleNoteRoutes(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("get status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+		}
+		var result note
+		if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+
+	if createdNote := getNote(); !createdNote.LinksClickable {
+		t.Fatal("new notes should enable clickable links by default")
+	}
+
+	put := func(body string) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPut, "/api/notes/"+strconv.FormatInt(created.ID, 10), strings.NewReader(body))
+		response := httptest.NewRecorder()
+		app.handleNoteRoutes(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("put status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+		}
+	}
+
+	put(`{"title":"Links","content":"https://example.com","links_clickable":false}`)
+	if updated := getNote(); updated.LinksClickable {
+		t.Fatal("links_clickable=false was not persisted")
+	}
+	put(`{"title":"Links","content":"Updated by an older client"}`)
+	if updated := getNote(); updated.LinksClickable {
+		t.Fatal("an update without links_clickable should preserve the saved setting")
+	}
+}
+
 func TestPublicHTTPURL(t *testing.T) {
 	tests := []struct {
 		value string
