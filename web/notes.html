@@ -571,6 +571,18 @@
       color: var(--muted);
     }
 
+    .note-meta-due { color: var(--accent); font-weight: 600; }
+    .note-meta-due.is-due { color: var(--danger); }
+
+    .note-editor-due {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .note-editor-due input { flex: 1; }
+    .note-editor-due .btn-cancel { text-transform: none; letter-spacing: 0; }
+
     /* ── Checklist / Workflow ── */
     .checklist-progress {
       margin-bottom: 16px;

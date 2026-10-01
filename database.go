@@ -120,6 +120,7 @@ func initializeSchema(db *sql.DB) error {
 		`ALTER TABLE modules ADD COLUMN source_url TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE notes ADD COLUMN group_id INTEGER NULL REFERENCES note_groups(id) ON DELETE SET NULL`,
 		`ALTER TABLE notes ADD COLUMN links_clickable INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE notes ADD COLUMN due_at DATETIME NULL`,
 	}
 
 	for _, stmt := range migrations {

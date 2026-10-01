@@ -51,7 +51,14 @@ async function init() {
     const params = new URLSearchParams(location.search);
     const bmId    = Number(params.get("bookmark_id"));
     const bmTitle = params.get("bookmark_title") || "";
-    if (bmId > 0) {
+    const noteId  = Number(params.get("note_id"));
+    if (noteId > 0) {
+      if (allNotes.some(note => note.id === noteId)) {
+        selectNote(noteId);
+      } else {
+        setStatus("Notiz nicht gefunden.", true);
+      }
+    } else if (bmId > 0) {
       const linkedNote = allNotes
         .filter(note => (note.bookmark_ids || []).includes(bmId))
         .sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")))[0];
@@ -463,9 +470,15 @@ function renderNoteView(note) {
     </div>`;
   }
 
+  const dueValue = toDueInputValue(note.due_at);
+  const dueHtml = dueValue
+    ? `<span class="note-meta-date note-meta-due${dueValue <= todayDueValue() ? " is-due" : ""}">Fällig: ${esc(formatDueDate(dueValue))}</span>`
+    : "";
+
   const metaHtml = `
     <div class="note-meta-row">
       <span class="type-badge type-${esc(note.type)}">${typeLabel(note.type)}</span>
+      ${dueHtml}
       <span class="note-meta-date">Erstellt: ${formatDateLong(note.created_at)}</span>
       <span class="note-meta-date">Geändert: ${formatDateLong(note.updated_at)}</span>
     </div>
@@ -531,6 +544,7 @@ function openEditor(note, prefillTitle = "") {
   const tags    = (note?.tags || []).join(", ");
   const groupId = note?.group_id ?? "";
   const linksClickable = note?.links_clickable !== false;
+  const dueAt   = toDueInputValue(note?.due_at);
   const checklistPlaceholder = "# Einarbeitung\n- [ ] Repository klonen\n- [ ] README lesen\n- [ ] Lokale Umgebung einrichten\n\n# Erste Schritte\n- [ ] Ansprechpartner kontaktieren\n- [ ] Ticket-System-Zugang einrichten";
 
   const groupOptionsHtml = allNoteGroups
@@ -580,6 +594,13 @@ function openEditor(note, prefillTitle = "") {
         Tags <span style="font-weight:400;text-transform:none;letter-spacing:0">(kommagetrennt)</span>
         <input id="editor-tags" type="text" value="${esc(tags)}" placeholder="z.B. python, backend, todo" />
       </label>
+      <label>
+        Fälligkeitsdatum
+        <span class="note-editor-due">
+          <input id="editor-due-at" type="date" value="${esc(dueAt)}" />
+          <button type="button" id="btn-clear-due" class="btn-cancel">Leeren</button>
+        </span>
+      </label>
       <div class="editor-actions">
         <button type="button" id="btn-cancel-edit" class="btn-cancel">Abbrechen</button>
         <button type="submit" class="btn-save">${isNew ? "Erstellen" : "Speichern"}</button>
@@ -609,6 +630,10 @@ function openEditor(note, prefillTitle = "") {
     contentArea.selectionStart = contentArea.selectionEnd = contentArea.value.length;
   });
 
+  document.getElementById("btn-clear-due").addEventListener("click", () => {
+    document.getElementById("editor-due-at").value = "";
+  });
+
   document.getElementById("btn-cancel-edit").addEventListener("click", () => {
     isEditing = false;
     pendingBookmarkIds = [];
@@ -634,6 +659,7 @@ async function saveNote(existingId, existingBookmarkIds) {
   const tagsRaw = document.getElementById("editor-tags").value;
   const tags    = tagsRaw.split(",").map(t => t.trim()).filter(Boolean);
   const linksClickable = document.getElementById("editor-links-clickable").checked;
+  const dueAt = document.getElementById("editor-due-at").value;
 
   if (type === "vault") {
     const password = document.getElementById("editor-vault-password")?.value || "";
@@ -652,7 +678,7 @@ async function saveNote(existingId, existingBookmarkIds) {
   // New note: use bookmark from URL param; existing note: preserve its links
   const bookmarkIds = existingId ? (existingBookmarkIds || []) : pendingBookmarkIds;
 
-  const body = { title, content, type, group_id: groupId, tags, bookmark_ids: bookmarkIds, links_clickable: linksClickable };
+  const body = { title, content, type, group_id: groupId, tags, bookmark_ids: bookmarkIds, links_clickable: linksClickable, due_at: dueAt };
 
   try {
     setStatus("Speichere…");
@@ -952,6 +978,20 @@ function formatDateLong(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return "–";
   return d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function toDueInputValue(raw) {
+  return /^\d{4}-\d{2}-\d{2}/.test(raw || "") ? raw.slice(0, 10) : "";
+}
+
+function todayDueValue() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function formatDueDate(value) {
+  const [year, month, day] = value.split("-");
+  return `${day}.${month}.${year}`;
 }
 
 function setStatus(msg, isErr = false) {

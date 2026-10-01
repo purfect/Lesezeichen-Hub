@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -30,13 +31,13 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 				like := "%" + term + "%"
 				args = append(args, like, like, like)
 			}
-			query := `SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, created_at, updated_at
+			query := `SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, due_at, created_at, updated_at
 				FROM notes WHERE ` + strings.Join(conditions, " AND ") + `
 				ORDER BY updated_at DESC, id DESC`
 			rows, err = app.db.QueryContext(r.Context(), query, args...)
 		} else {
 			rows, err = app.db.QueryContext(r.Context(),
-				`SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, created_at, updated_at
+				`SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, due_at, created_at, updated_at
 				 FROM notes ORDER BY updated_at DESC, id DESC`)
 		}
 		if err != nil {
@@ -51,7 +52,7 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 			var bmRaw, tagsRaw string
 			var linksClickable int
 			var groupID sql.NullInt64
-			if err := rows.Scan(&n.ID, &n.Title, &n.Content, &n.Type, &linksClickable, &groupID, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			if err := rows.Scan(&n.ID, &n.Title, &n.Content, &n.Type, &linksClickable, &groupID, &bmRaw, &tagsRaw, &n.DueAt, &n.CreatedAt, &n.UpdatedAt); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
@@ -78,6 +79,7 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 			BookmarkIDs    []int64  `json:"bookmark_ids"`
 			Tags           []string `json:"tags"`
 			LinksClickable *bool    `json:"links_clickable"`
+			DueAt          string   `json:"due_at"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
@@ -86,6 +88,11 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 		title := strings.TrimSpace(payload.Title)
 		if title == "" {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("title ist erforderlich"))
+			return
+		}
+		dueAt, err := parseOptionalDateTime(payload.DueAt)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("due_at ist ungueltig"))
 			return
 		}
 		noteType := strings.TrimSpace(payload.Type)
@@ -97,7 +104,7 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 			linksClickable = *payload.LinksClickable
 		}
 		res, err := app.db.ExecContext(r.Context(),
-			`INSERT INTO notes(title, content, type, group_id, bookmark_ids, tags, links_clickable) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO notes(title, content, type, group_id, bookmark_ids, tags, links_clickable, due_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
 			title,
 			strings.TrimSpace(payload.Content),
 			noteType,
@@ -105,6 +112,7 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 			serializeBookmarkIDs(payload.BookmarkIDs),
 			serializeTags(payload.Tags),
 			boolToInt(linksClickable),
+			dueAt,
 		)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
@@ -139,6 +147,15 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if trimmed == "due" {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		app.handleNoteDue(w, r)
+		return
+	}
+
 	noteID, err := strconv.ParseInt(trimmed, 10, 64)
 	if err != nil || noteID <= 0 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltige note-id"))
@@ -152,8 +169,8 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 		var linksClickable int
 		var groupID sql.NullInt64
 		err := app.db.QueryRowContext(r.Context(),
-			`SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, created_at, updated_at FROM notes WHERE id = ?`, noteID).
-			Scan(&n.ID, &n.Title, &n.Content, &n.Type, &linksClickable, &groupID, &bmRaw, &tagsRaw, &n.CreatedAt, &n.UpdatedAt)
+			`SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, due_at, created_at, updated_at FROM notes WHERE id = ?`, noteID).
+			Scan(&n.ID, &n.Title, &n.Content, &n.Type, &linksClickable, &groupID, &bmRaw, &tagsRaw, &n.DueAt, &n.CreatedAt, &n.UpdatedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, fmt.Errorf("notiz nicht gefunden"))
 			return
@@ -178,6 +195,7 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 			BookmarkIDs    []int64  `json:"bookmark_ids"`
 			Tags           []string `json:"tags"`
 			LinksClickable *bool    `json:"links_clickable"`
+			DueAt          *string  `json:"due_at"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("ungueltiges JSON"))
@@ -187,6 +205,16 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 		if title == "" {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("title ist erforderlich"))
 			return
+		}
+		// a missing due_at keeps the stored value, an empty string clears it
+		var dueAt *time.Time
+		if payload.DueAt != nil {
+			parsed, err := parseOptionalDateTime(*payload.DueAt)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, fmt.Errorf("due_at ist ungueltig"))
+				return
+			}
+			dueAt = parsed
 		}
 		noteType := strings.TrimSpace(payload.Type)
 		if noteType != "note" && noteType != "code" && noteType != "annotation" && noteType != "vault" && noteType != "checklist" {
@@ -204,7 +232,7 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		res, err := app.db.ExecContext(r.Context(),
-			`UPDATE notes SET title = ?, content = ?, type = ?, group_id = ?, bookmark_ids = ?, tags = ?, links_clickable = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			`UPDATE notes SET title = ?, content = ?, type = ?, group_id = ?, bookmark_ids = ?, tags = ?, links_clickable = ?, due_at = CASE WHEN ? = 1 THEN ? ELSE due_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			title,
 			strings.TrimSpace(payload.Content),
 			noteType,
@@ -212,6 +240,8 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 			serializeBookmarkIDs(payload.BookmarkIDs),
 			serializeTags(payload.Tags),
 			boolToInt(linksClickable),
+			boolToInt(payload.DueAt != nil),
+			dueAt,
 			noteID,
 		)
 		if err != nil {
@@ -364,6 +394,37 @@ func (app *application) handleNoteGroupRoutes(w http.ResponseWriter, r *http.Req
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+func (app *application) handleNoteDue(w http.ResponseWriter, r *http.Request) {
+	rows, err := app.db.QueryContext(r.Context(),
+		`SELECT id, title, type, due_at FROM notes WHERE due_at IS NOT NULL ORDER BY due_at ASC, id ASC`)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer rows.Close()
+
+	type dueNote struct {
+		ID    int64      `json:"id"`
+		Title string     `json:"title"`
+		Type  string     `json:"type"`
+		DueAt *time.Time `json:"due_at"`
+	}
+	items := make([]dueNote, 0)
+	for rows.Next() {
+		var n dueNote
+		if err := rows.Scan(&n.ID, &n.Title, &n.Type, &n.DueAt); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		items = append(items, n)
+	}
+	if err := rows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"notes": items})
 }
 
 func (app *application) handleNoteStats(w http.ResponseWriter, r *http.Request) {

@@ -160,6 +160,64 @@ func TestHandleNotesLinksClickableRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHandleNotesDueAtRoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	app := &application{db: db}
+
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/notes", strings.NewReader(`{"title":"Frist","due_at":"2026-10-05"}`))
+	createResponse := httptest.NewRecorder()
+	app.handleNotes(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(createResponse.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	notePath := "/api/notes/" + strconv.FormatInt(created.ID, 10)
+
+	dueNotes := func() []note {
+		t.Helper()
+		response := httptest.NewRecorder()
+		app.handleNoteRoutes(response, httptest.NewRequest(http.MethodGet, "/api/notes/due", nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("due status = %d: %s", response.Code, response.Body.String())
+		}
+		var payload struct {
+			Notes []note `json:"notes"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload.Notes
+	}
+	put := func(body string) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		app.handleNoteRoutes(response, httptest.NewRequest(http.MethodPut, notePath, strings.NewReader(body)))
+		if response.Code != http.StatusOK {
+			t.Fatalf("put status = %d: %s", response.Code, response.Body.String())
+		}
+	}
+
+	if notes := dueNotes(); len(notes) != 1 || notes[0].DueAt == nil || notes[0].DueAt.Format("2006-01-02") != "2026-10-05" {
+		t.Fatalf("due notes = %#v, want one note due 2026-10-05", notes)
+	}
+	put(`{"title":"Frist","content":"ohne due_at"}`)
+	if notes := dueNotes(); len(notes) != 1 {
+		t.Fatal("an update without due_at should preserve the saved date")
+	}
+	put(`{"title":"Frist","due_at":""}`)
+	if notes := dueNotes(); len(notes) != 0 {
+		t.Fatalf("due notes = %#v, want none after clearing", notes)
+	}
+}
+
 func TestPublicHTTPURL(t *testing.T) {
 	tests := []struct {
 		value string

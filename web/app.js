@@ -1,6 +1,7 @@
 const state = {
   groups: [],
   noteCounts: {},
+  dueNotes: [],
   update: null,
   search: "",
   includeArchivedInSearch: false,
@@ -893,12 +894,14 @@ function parseNumberish(raw, fallback = 0) {
 async function loadState(showHint = false) {
   try {
     if (showHint) setStatus("Lade Daten neu...");
-    const [payload, countPayload] = await Promise.all([
+    const [payload, countPayload, dueNotesPayload] = await Promise.all([
       request("/api/state"),
       request("/api/notes/bookmark-counts"),
+      request("/api/notes/due"),
     ]);
     state.groups = payload.groups ?? [];
     state.noteCounts = countPayload.counts || {};
+    state.dueNotes = dueNotesPayload.notes || [];
     populateGroupSelect();
     populateFilterOptions();
     render();
@@ -1265,15 +1268,32 @@ function onFavoriteDrop(event, targetBookmarkID) {
 }
 
 function renderReminderAlerts() {
-  const alerts = state.groups
+  const bookmarkAlerts = state.groups
     .flatMap((group) => (group.bookmarks || []).map((bookmark) => ({
       ...bookmark,
       groupName: group.name,
     })))
     .filter((bookmark) => isBookmarkAlert(bookmark) && !bookmark.archived)
+    .map((bookmark) => ({
+      title: bookmark.title,
+      label: `${bookmark.title} (${bookmark.groupName})`,
+      href: bookmark.url,
+      external: true,
+      date: parseBookmarkDate(bookmark.remind_at),
+    }));
+  const noteAlerts = state.dueNotes
+    .map((note) => ({
+      title: note.title,
+      label: `📝 ${note.title} (Notiz)`,
+      href: `/static/notes.html?note_id=${encodeURIComponent(note.id)}`,
+      external: false,
+      date: parseNoteDueDate(note.due_at),
+    }))
+    .filter((note) => note.date && getDaysUntil(note.date) <= 3);
+  const alerts = [...bookmarkAlerts, ...noteAlerts]
     .sort((a, b) => {
-      const aDate = parseBookmarkDate(a.remind_at)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-      const bDate = parseBookmarkDate(b.remind_at)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const aDate = a.date?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const bDate = b.date?.getTime() ?? Number.MAX_SAFE_INTEGER;
       if (aDate !== bDate) {
         return aDate - bDate;
       }
@@ -1287,16 +1307,17 @@ function renderReminderAlerts() {
   }
 
   els.reminderAlertsBlock.classList.remove("hidden");
-  for (const bookmark of alerts) {
+  for (const alert of alerts) {
     const li = document.createElement("li");
     const link = document.createElement("a");
-    const reminder = parseBookmarkDate(bookmark.remind_at);
-    const days = getDaysUntil(reminder);
+    const days = getDaysUntil(alert.date);
 
-    link.href = bookmark.url;
-    link.target = "_blank";
-    link.rel = "noreferrer";
-    link.textContent = `${bookmark.title} (${bookmark.groupName})`;
+    link.href = alert.href;
+    if (alert.external) {
+      link.target = "_blank";
+      link.rel = "noreferrer";
+    }
+    link.textContent = alert.label;
 
     const meta = document.createElement("span");
     if (days < 0) {
@@ -1963,6 +1984,12 @@ function parseBookmarkDate(rawValue) {
   const date = new Date(rawValue);
   if (Number.isNaN(date.getTime())) return null;
   return date;
+}
+
+function parseNoteDueDate(rawValue) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(rawValue || "");
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
 }
 
 function startOfToday() {

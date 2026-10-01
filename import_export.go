@@ -330,7 +330,7 @@ func (app *application) handleBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := app.db.QueryContext(r.Context(),
-		`SELECT title, content, type, links_clickable, bookmark_ids, tags FROM notes ORDER BY id ASC`)
+		`SELECT title, content, type, links_clickable, bookmark_ids, tags, due_at FROM notes ORDER BY id ASC`)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -342,7 +342,7 @@ func (app *application) handleBackup(w http.ResponseWriter, r *http.Request) {
 		var n backupNote
 		var bmRaw, tagsRaw string
 		var linksClickable bool
-		if err := rows.Scan(&n.Title, &n.Content, &n.Type, &linksClickable, &bmRaw, &tagsRaw); err != nil {
+		if err := rows.Scan(&n.Title, &n.Content, &n.Type, &linksClickable, &bmRaw, &tagsRaw, &n.DueAt); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -536,8 +536,8 @@ func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
 			`SELECT id FROM notes WHERE title = ? LIMIT 1`, title).Scan(&existingID)
 		if errors.Is(err, sql.ErrNoRows) {
 			_, err = tx.ExecContext(r.Context(),
-				`INSERT INTO notes(title, content, type, bookmark_ids, tags, links_clickable) VALUES(?, ?, ?, ?, ?, ?)`,
-				title, strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw, boolToInt(linksClickable))
+				`INSERT INTO notes(title, content, type, bookmark_ids, tags, links_clickable, due_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+				title, strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw, boolToInt(linksClickable), n.DueAt)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
@@ -548,8 +548,8 @@ func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
 			return
 		} else if conflictStrategy == "overwrite" {
 			_, _ = tx.ExecContext(r.Context(),
-				`UPDATE notes SET content = ?, type = ?, bookmark_ids = ?, tags = ?, links_clickable = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-				strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw, boolToInt(linksClickable), existingID)
+				`UPDATE notes SET content = ?, type = ?, bookmark_ids = ?, tags = ?, links_clickable = ?, due_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				strings.TrimSpace(n.Content), noteType, bmRaw, tagsRaw, boolToInt(linksClickable), n.DueAt, existingID)
 			updatedNotes++
 		}
 	}
