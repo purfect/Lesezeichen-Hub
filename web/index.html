@@ -77,6 +77,23 @@
             <button id="install-update" class="ghost hidden" type="button">Update installieren</button>
           </div>
         </section>
+        <section class="update-bar" aria-label="Automatische Sicherung">
+          <div>
+            <strong>Automatische Sicherung</strong>
+            <span id="auto-backup-info">Wird geladen...</span>
+          </div>
+          <form id="auto-backup-form" class="update-actions auto-backup-form">
+            <label class="inline-check" for="auto-backup-enabled">
+              <input id="auto-backup-enabled" type="checkbox" /> Täglich
+            </label>
+            <input id="auto-backup-dir" type="text" placeholder="Sicherungsordner" aria-label="Sicherungsordner" />
+            <label class="inline-check" for="auto-backup-keep">
+              Behalten <input id="auto-backup-keep" type="number" min="1" max="365" />
+            </label>
+            <button class="ghost" type="submit">Speichern</button>
+            <button id="auto-backup-run" class="ghost" type="button">Jetzt sichern</button>
+          </form>
+        </section>
         <div id="data-actions" class="panel-actions">
           <button id="export-json" class="ghost" type="button">Export JSON</button>
           <button id="export-csv" class="ghost" type="button">Export CSV</button>
@@ -95,6 +112,10 @@
         <h3>Wiedervorlage bald/fällig</h3>
         <p class="search-info">Alle Lesezeichen und Notizen mit Datum bis in 3 Tagen oder bereits überschritten.</p>
         <ul id="reminder-alerts-list" class="reminder-alerts-list"></ul>
+      </div>
+      <div id="note-hits-block" class="note-hits hidden" aria-live="polite">
+        <h3>Treffer in Notizen</h3>
+        <ul id="note-hits-list" class="note-hits-list"></ul>
       </div>
       <div id="groups" class="group-grid"></div>
     </section>

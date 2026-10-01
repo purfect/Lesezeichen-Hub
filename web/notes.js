@@ -5,6 +5,7 @@ let allBookmarks = [];   // flat list from /api/state
 let activeNoteId = null;
 let isEditing = false;
 let searchDebounce = null;
+let searchResult = null; // { query, ids, snippets } from /api/notes?q=, null without search
 let bookmarkNotesOnly = false;
 let viewMode = "list"; // "list" | "groups"
 let expandedGroupKeys = new Set();
@@ -117,21 +118,11 @@ function appendNoteItem(n, bookmarkIdSet) {
     item.className = "note-item" + (n.id === activeNoteId ? " active" : "") + (hasOrphan ? " has-orphan" : "");
     item.dataset.id = n.id;
 
-    let preview;
-    if (n.type === "vault") {
-      preview = "🔒 Verschlüsselte Vault-Notiz";
-    } else if (n.type === "checklist") {
-      const { done, total } = checklistProgress(n.content);
-      preview = total > 0 ? `${done}/${total} Schritte erledigt` : "Noch keine Schritte";
-    } else {
-      preview = (n.content || "").replace(/\n/g, " ").slice(0, 80);
-    }
-
     item.innerHTML = `
       <div class="note-item-title">${esc(n.title)}</div>
       <div class="note-item-meta">
         <span class="type-badge type-${esc(n.type)}">${typeLabel(n.type)}</span>
-        <span class="note-item-preview">${esc(preview)}</span>
+        <span class="note-item-preview">${notePreviewHtml(n)}</span>
         <span class="note-item-date">${formatDate(n.updated_at)}</span>
       </div>
     `;
@@ -141,21 +132,12 @@ function appendNoteItem(n, bookmarkIdSet) {
 
 function noteItemHtml(n, bookmarkIdSet) {
   const hasOrphan = (n.bookmark_ids || []).some(id => !bookmarkIdSet.has(id));
-  let preview;
-  if (n.type === "vault") {
-    preview = "🔒 Verschlüsselte Vault-Notiz";
-  } else if (n.type === "checklist") {
-    const { done, total } = checklistProgress(n.content);
-    preview = total > 0 ? `${done}/${total} Schritte erledigt` : "Noch keine Schritte";
-  } else {
-    preview = (n.content || "").replace(/\n/g, " ").slice(0, 80);
-  }
   return `
     <div class="note-item${n.id === activeNoteId ? " active" : ""}${hasOrphan ? " has-orphan" : ""}" data-id="${n.id}">
       <div class="note-item-title">${esc(n.title)}</div>
       <div class="note-item-meta">
         <span class="type-badge type-${esc(n.type)}">${typeLabel(n.type)}</span>
-        <span class="note-item-preview">${esc(preview)}</span>
+        <span class="note-item-preview">${notePreviewHtml(n)}</span>
         <span class="note-item-date">${formatDate(n.updated_at)}</span>
       </div>
     </div>
@@ -276,17 +258,50 @@ async function deleteNoteGroup(groupId) {
 }
 
 function getFilteredNotes() {
-  const terms = els.notesSearch.value.trim().toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
-  return allNotes.filter(note => {
-    const matchesBookmarkFilter = !bookmarkNotesOnly || (note.bookmark_ids || []).length > 0;
-    const searchableText = [note.title, note.content || "", ...(note.tags || [])]
-      .join(" ")
-      .toLowerCase();
-    const matchesSearch = terms.every(term => searchableText.includes(term));
-    return matchesBookmarkFilter && matchesSearch;
-  });
+  let notes = allNotes;
+  if (searchResult) {
+    const byId = new Map(allNotes.map(note => [note.id, note]));
+    notes = searchResult.ids.map(id => byId.get(id)).filter(Boolean);
+  }
+  return notes.filter(note => !bookmarkNotesOnly || (note.bookmark_ids || []).length > 0);
+}
+
+async function runNoteSearch() {
+  const query = els.notesSearch.value.trim();
+  if (!query) {
+    searchResult = null;
+    renderFilteredList();
+    return;
+  }
+  try {
+    const res = await request(`/api/notes?q=${encodeURIComponent(query)}`);
+    if (els.notesSearch.value.trim() !== query) return;
+    const notes = res.notes || [];
+    searchResult = {
+      query,
+      ids: notes.map(note => note.id),
+      snippets: new Map(notes.filter(note => note.snippet).map(note => [note.id, note.snippet])),
+    };
+    renderFilteredList();
+  } catch (err) {
+    setStatus(err.message || "Suche fehlgeschlagen.", true);
+  }
+}
+
+function notePreviewHtml(n) {
+  const snippet = searchResult?.snippets.get(n.id);
+  if (snippet) return highlightHtml(snippet);
+  if (n.type === "vault") return esc("🔒 Verschlüsselte Vault-Notiz");
+  if (n.type === "checklist") {
+    const { done, total } = checklistProgress(n.content);
+    return esc(total > 0 ? `${done}/${total} Schritte erledigt` : "Noch keine Schritte");
+  }
+  return esc((n.content || "").replace(/\n/g, " ").slice(0, 80));
+}
+
+// FTS snippets mark hits with \u0002 … \u0003; escaping first keeps the markup safe.
+function highlightHtml(text) {
+  return esc(text).replace(/\u0002/g, "<mark>").replace(/\u0003/g, "</mark>");
 }
 
 function renderFilteredList() {
@@ -781,7 +796,7 @@ els.notesSearch.addEventListener("input", () => {
   updateSearchClearButton();
   clearTimeout(searchDebounce);
   searchDebounce = setTimeout(() => {
-    renderFilteredList();
+    runNoteSearch();
   }, 200);
 });
 
@@ -806,6 +821,7 @@ els.btnNewGroup.addEventListener("click", () => {
 
 els.notesSearchClear.addEventListener("click", () => {
   els.notesSearch.value = "";
+  searchResult = null;
   renderFilteredList();
   updateSearchClearButton();
   els.notesSearch.focus();
@@ -817,6 +833,7 @@ async function reloadNotes() {
   allNotes = res.notes || [];
   updateTitleCounter();
   renderFilteredList();
+  if (searchResult) await runNoteSearch();
 }
 
 function updateTitleCounter() {

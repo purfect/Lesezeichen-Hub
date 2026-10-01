@@ -297,10 +297,25 @@ func (app *application) handleBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	groups, err := app.fetchState(r.Context())
+	payload, err := app.buildBackupPayload(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
+	}
+
+	stamp := time.Now().Format("20060102-150405")
+	filename := fmt.Sprintf("lesezeichen-vollsicherung-%s.json", stamp)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("encode backup: %v", err)
+	}
+}
+
+func (app *application) buildBackupPayload(ctx context.Context) (backupPayload, error) {
+	groups, err := app.fetchState(ctx)
+	if err != nil {
+		return backupPayload{}, err
 	}
 
 	bkGroups := make([]backupGroup, 0, len(groups))
@@ -329,11 +344,10 @@ func (app *application) handleBackup(w http.ResponseWriter, r *http.Request) {
 		bkGroups = append(bkGroups, bg)
 	}
 
-	rows, err := app.db.QueryContext(r.Context(),
+	rows, err := app.db.QueryContext(ctx,
 		`SELECT title, content, type, links_clickable, bookmark_ids, tags, due_at FROM notes ORDER BY id ASC`)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
+		return backupPayload{}, err
 	}
 	defer rows.Close()
 
@@ -343,8 +357,7 @@ func (app *application) handleBackup(w http.ResponseWriter, r *http.Request) {
 		var bmRaw, tagsRaw string
 		var linksClickable bool
 		if err := rows.Scan(&n.Title, &n.Content, &n.Type, &linksClickable, &bmRaw, &tagsRaw, &n.DueAt); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
-			return
+			return backupPayload{}, err
 		}
 		if n.Type == "vault" && !strings.HasPrefix(n.Content, "vault:v1:") {
 			n.Content = ""
@@ -355,24 +368,15 @@ func (app *application) handleBackup(w http.ResponseWriter, r *http.Request) {
 		bkNotes = append(bkNotes, n)
 	}
 	if err := rows.Err(); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
+		return backupPayload{}, err
 	}
 
-	payload := backupPayload{
+	return backupPayload{
 		Version:    1,
 		ExportedAt: time.Now(),
 		Groups:     bkGroups,
 		Notes:      bkNotes,
-	}
-
-	stamp := time.Now().Format("20060102-150405")
-	filename := fmt.Sprintf("lesezeichen-vollsicherung-%s.json", stamp)
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		log.Printf("encode backup: %v", err)
-	}
+	}, nil
 }
 
 func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {

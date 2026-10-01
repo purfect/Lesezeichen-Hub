@@ -150,7 +150,7 @@ func initializeSchema(db *sql.DB) error {
 		return err
 	}
 
-	return nil
+	return initializeSearchIndex(db)
 }
 
 func migrateBookmarksGroupIDNullable(db *sql.DB) error {

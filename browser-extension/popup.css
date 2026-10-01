@@ -1,0 +1,137 @@
+:root {
+  color-scheme: dark;
+  --bg: #101a27;
+  --panel: #0a121d;
+  --line: #365069;
+  --ink: #e8eef7;
+  --muted: #9fb0c8;
+  --accent: #2cb7a1;
+  --danger: #ff8b93;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 360px;
+  margin: 0;
+  padding: 12px 14px 14px;
+  font: 13px "Segoe UI", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+h1 { margin: 0; font-size: 16px; }
+
+.header-actions { display: flex; gap: 6px; }
+
+button { font: inherit; cursor: pointer; }
+
+button.link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 2px 4px;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.tab {
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+}
+
+.tab.active {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: rgba(44, 183, 161, 0.15);
+}
+
+form { display: grid; gap: 8px; }
+
+label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+input, textarea, select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--panel);
+  font: inherit;
+}
+
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+textarea { min-height: 54px; resize: vertical; }
+
+.date-row { display: flex; gap: 6px; }
+.date-row input { flex: 1; }
+
+.ghost {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  background: transparent;
+}
+
+.checks { display: flex; gap: 16px; }
+
+.checks label, label.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+}
+
+.checks input, label.check input { width: auto; }
+
+.primary {
+  margin-top: 4px;
+  padding: 9px;
+  border: none;
+  border-radius: 8px;
+  color: #041512;
+  background: var(--accent);
+  font-weight: 700;
+}
+
+.primary:disabled { opacity: 0.6; cursor: default; }
+
+.hint {
+  margin: 0 0 10px;
+  padding: 7px 9px;
+  border: 1px solid rgba(232, 184, 75, 0.5);
+  border-radius: 7px;
+  color: #e8b84b;
+  background: rgba(232, 184, 75, 0.08);
+}
+
+.status { min-height: 1em; margin: 10px 0 0; color: var(--muted); }
+.status.is-error { color: var(--danger); }
+.status.is-success { color: var(--accent); }
+
+.hidden { display: none !important; }

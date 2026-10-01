@@ -4,6 +4,7 @@ const state = {
   dueNotes: [],
   update: null,
   search: "",
+  searchHits: null,
   includeArchivedInSearch: false,
   filters: { groupId: null, tag: "", favorite: false, pinned: false, due: false },
   savedViews: loadSavedViews(),
@@ -91,6 +92,14 @@ const els = {
   deleteView: document.getElementById("delete-view"),
   reminderAlertsBlock: document.getElementById("reminder-alerts-block"),
   reminderAlertsList: document.getElementById("reminder-alerts-list"),
+  noteHitsBlock: document.getElementById("note-hits-block"),
+  noteHitsList: document.getElementById("note-hits-list"),
+  autoBackupForm: document.getElementById("auto-backup-form"),
+  autoBackupEnabled: document.getElementById("auto-backup-enabled"),
+  autoBackupDir: document.getElementById("auto-backup-dir"),
+  autoBackupKeep: document.getElementById("auto-backup-keep"),
+  autoBackupRun: document.getElementById("auto-backup-run"),
+  autoBackupInfo: document.getElementById("auto-backup-info"),
   status: document.getElementById("status"),
   reload: document.getElementById("reload"),
   search: document.getElementById("search"),
@@ -151,6 +160,8 @@ function init() {
     render();
   });
   els.searchClear.addEventListener("click", clearSearch);
+  els.autoBackupForm.addEventListener("submit", onSaveAutoBackupSettings);
+  els.autoBackupRun.addEventListener("click", onRunAutoBackup);
   document.addEventListener("keydown", onGlobalKeyDown);
 
   updateSearchClearButton();
@@ -158,6 +169,7 @@ function init() {
   syncThemeToggle();
   loadState();
   loadVersionInfo();
+  loadAutoBackupSettings();
 }
 
 function syncThemeToggle() {
@@ -278,7 +290,28 @@ function scheduleSearchReload() {
     render();
     return;
   }
-  _searchReloadTimer = setTimeout(() => loadState(), 350);
+  _searchReloadTimer = setTimeout(() => runSearch(state.search), 250);
+}
+
+let _searchRequestQuery = null;
+
+async function runSearch(query) {
+  if (!query || _searchRequestQuery === query) return;
+  _searchRequestQuery = query;
+  try {
+    const result = await request(`/api/search?q=${encodeURIComponent(query)}`);
+    if (state.search !== query) return;
+    state.searchHits = { query, bookmarkIds: new Set(result.bookmark_ids || []), notes: result.notes || [] };
+    render();
+  } catch (error) {
+    if (state.search === query) setStatus(error.message, true);
+  } finally {
+    if (_searchRequestQuery === query) _searchRequestQuery = null;
+  }
+}
+
+function currentSearchHits() {
+  return state.search && state.searchHits?.query === state.search ? state.searchHits : null;
 }
 
 function scheduleSearchTracking(term) {
@@ -528,6 +561,62 @@ async function onApplyRestore(event) {
 function closeRestoreDialog() {
   if (els.restoreDialog.open) els.restoreDialog.close();
   pendingRestorePayload = null;
+}
+
+async function loadAutoBackupSettings() {
+  try {
+    renderAutoBackupSettings(await request("/api/backup-settings"));
+  } catch (error) {
+    els.autoBackupInfo.textContent = error.message || "Einstellungen konnten nicht geladen werden.";
+  }
+}
+
+function renderAutoBackupSettings(settings) {
+  els.autoBackupEnabled.checked = Boolean(settings.enabled);
+  els.autoBackupDir.value = settings.dir || "";
+  els.autoBackupKeep.value = String(settings.keep || 14);
+  const backups = settings.backups || [];
+  const parts = [settings.enabled ? "Täglich aktiv" : "Deaktiviert"];
+  if (backups.length > 0) {
+    parts.push(`letzte: ${new Date(backups[0].created_at).toLocaleString("de-DE")}`);
+    parts.push(`${backups.length} vorhanden`);
+  } else {
+    parts.push("noch keine Sicherung");
+  }
+  if (settings.last_error) parts.push(`Fehler: ${settings.last_error}`);
+  els.autoBackupInfo.textContent = parts.join(" · ");
+  els.autoBackupInfo.classList.toggle("is-error", Boolean(settings.last_error));
+}
+
+async function onSaveAutoBackupSettings(event) {
+  event.preventDefault();
+  try {
+    const settings = await request("/api/backup-settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        enabled: els.autoBackupEnabled.checked,
+        dir: els.autoBackupDir.value.trim(),
+        keep: Number(els.autoBackupKeep.value),
+      }),
+    });
+    renderAutoBackupSettings(settings);
+    setStatus("Sicherungseinstellungen gespeichert.");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
+async function onRunAutoBackup() {
+  els.autoBackupRun.disabled = true;
+  try {
+    renderAutoBackupSettings(await request("/api/backup-settings/run", { method: "POST" }));
+    setStatus("Sicherung erstellt.");
+  } catch (error) {
+    setStatus(error.message, true);
+    loadAutoBackupSettings();
+  } finally {
+    els.autoBackupRun.disabled = false;
+  }
 }
 
 async function loadVersionInfo() {
@@ -900,6 +989,7 @@ async function loadState(showHint = false) {
       request("/api/notes/due"),
     ]);
     state.groups = payload.groups ?? [];
+    state.searchHits = null;
     state.noteCounts = countPayload.counts || {};
     state.dueNotes = dueNotesPayload.notes || [];
     populateGroupSelect();
@@ -989,8 +1079,10 @@ async function onCreateModule(event) {
 }
 
 function render() {
+  if (state.search && !currentSearchHits()) runSearch(state.search);
   renderFavoritesQuickbar();
   renderReminderAlerts();
+  renderNoteHits();
   els.groups.innerHTML = "";
   let matchCount = 0;
   let archivedMatchCount = 0;
@@ -1489,9 +1581,43 @@ function saveCollapsedGroupIds(collapsedSet) {
 
 function filterBookmarks(bookmarks) {
   if (!state.search) return bookmarks;
+  const hits = currentSearchHits();
+  if (hits) return bookmarks.filter((bookmark) => hits.bookmarkIds.has(bookmark.id));
   return bookmarks.filter((bookmark) => {
     return matchesSearch(bookmark.title, bookmark.url, bookmark.notes, (bookmark.tags || []).join(" "));
   });
+}
+
+function renderNoteHits() {
+  const notes = currentSearchHits()?.notes || [];
+  els.noteHitsList.innerHTML = "";
+  els.noteHitsBlock.classList.toggle("hidden", notes.length === 0);
+  for (const note of notes) {
+    const li = document.createElement("li");
+    const link = document.createElement("a");
+    link.href = `/static/notes.html?note_id=${encodeURIComponent(note.id)}`;
+    link.textContent = `📝 ${note.title}`;
+    li.appendChild(link);
+    if (note.snippet) {
+      const snippet = document.createElement("span");
+      appendHighlighted(snippet, note.snippet);
+      li.appendChild(snippet);
+    }
+    els.noteHitsList.appendChild(li);
+  }
+}
+
+// FTS snippets mark hits with \u0002 … \u0003
+function appendHighlighted(parent, text) {
+  for (const part of String(text).split(/(\u0002[^\u0003]*\u0003)/)) {
+    if (part.startsWith("\u0002")) {
+      const mark = document.createElement("mark");
+      mark.textContent = part.slice(1, -1);
+      parent.appendChild(mark);
+    } else if (part) {
+      parent.appendChild(document.createTextNode(part));
+    }
+  }
 }
 
 function shouldShowBookmark(bookmark) {

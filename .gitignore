@@ -5,6 +5,7 @@ Lesezeichen-Hub.exe
 data.db
 data.db-shm
 data.db-wal
+backups/
 .runtime/
 modules/
 RELEASE_NOTES*.md

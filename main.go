@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -34,6 +35,7 @@ func main() {
 
 	app := &application{
 		db:                 db,
+		dbPath:             strings.SplitN(dbPath, "?", 2)[0],
 		moduleAPIBase:      githubAPIBase,
 		moduleWebBase:      githubWebBase,
 		moduleManifestBase: githubRawBase,
@@ -50,6 +52,7 @@ func main() {
 	monitorContext, stopMonitors := context.WithCancel(context.Background())
 	defer stopMonitors()
 	go app.runHTTPMonitorScheduler(monitorContext)
+	go app.runAutoBackupScheduler(monitorContext)
 
 	indexHTML, err := fs.ReadFile(webFS, "index.html")
 	if err != nil {
@@ -64,6 +67,9 @@ func main() {
 	mux.HandleFunc("/api/import", app.handleImport)
 	mux.HandleFunc("/api/backup", app.handleBackup)
 	mux.HandleFunc("/api/restore", app.handleRestore)
+	mux.HandleFunc("/api/backup-settings", app.handleBackupSettings)
+	mux.HandleFunc("/api/backup-settings/run", app.handleBackupRun)
+	mux.HandleFunc("/api/search", app.handleSearch)
 	mux.HandleFunc("/api/groups", app.handleGroups)
 	mux.HandleFunc("/api/groups/", app.handleGroupRoutes)
 	mux.HandleFunc("/api/bookmarks", app.handleBookmarks)

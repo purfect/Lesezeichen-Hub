@@ -23,6 +23,7 @@ var appVersion = "dev"
 
 type application struct {
 	db                 *sql.DB
+	dbPath             string
 	webFS              fs.FS
 	moduleAPIBase      string
 	moduleWebBase      string
@@ -36,6 +37,8 @@ type application struct {
 	silverPricesMu     sync.RWMutex
 	silverPrices       silverPricesPayload
 	silverPricesAt     time.Time
+	backupMu           sync.Mutex
+	backupLastErr      string
 }
 
 type metalPricesPayload struct {
@@ -114,6 +117,7 @@ type note struct {
 	DueAt          *time.Time `json:"due_at,omitempty"`
 	CreatedAt      *time.Time `json:"created_at,omitempty"`
 	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
+	Snippet        string     `json:"snippet,omitempty"`
 }
 
 type noteGroup struct {
@@ -259,9 +263,9 @@ type backupBookmark struct {
 }
 
 type backupNote struct {
-	Title          string   `json:"title"`
-	Content        string   `json:"content"`
-	Type           string   `json:"type"`
+	Title          string     `json:"title"`
+	Content        string     `json:"content"`
+	Type           string     `json:"type"`
 	LinksClickable *bool      `json:"links_clickable,omitempty"`
 	BookmarkIDs    []int64    `json:"bookmark_ids"`
 	Tags           []string   `json:"tags"`

@@ -19,26 +19,22 @@ import (
 func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		q := strings.TrimSpace(r.URL.Query().Get("q"))
+		q := parseFTSQuery(r.URL.Query().Get("q"))
+		const columns = `n.id, n.title, n.content, n.type, n.links_clickable, n.group_id, n.bookmark_ids, n.tags, n.due_at, n.created_at, n.updated_at`
 		var rows *sql.Rows
 		var err error
-		if q != "" {
-			terms := strings.Fields(q)
-			conditions := make([]string, 0, len(terms))
-			args := make([]any, 0, len(terms)*3)
-			for _, term := range terms {
-				conditions = append(conditions, "(title LIKE ? OR content LIKE ? OR tags LIKE ?)")
-				like := "%" + term + "%"
-				args = append(args, like, like, like)
+		if !q.empty() {
+			snippet, order := "''", "n.updated_at DESC, n.id DESC"
+			if q.match != "" {
+				snippet, order = ftsSnippetSQL, ftsNotesRankSQL+", n.updated_at DESC"
 			}
-			query := `SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, due_at, created_at, updated_at
-				FROM notes WHERE ` + strings.Join(conditions, " AND ") + `
-				ORDER BY updated_at DESC, id DESC`
-			rows, err = app.db.QueryContext(r.Context(), query, args...)
+			where, args := q.where("notes_fts", []string{"title", "content", "tags"})
+			rows, err = app.db.QueryContext(r.Context(),
+				`SELECT `+columns+`, `+snippet+` FROM notes_fts JOIN notes n ON n.id = notes_fts.rowid
+				 WHERE `+where+` ORDER BY `+order, args...)
 		} else {
 			rows, err = app.db.QueryContext(r.Context(),
-				`SELECT id, title, content, type, links_clickable, group_id, bookmark_ids, tags, due_at, created_at, updated_at
-				 FROM notes ORDER BY updated_at DESC, id DESC`)
+				`SELECT `+columns+`, '' FROM notes n ORDER BY n.updated_at DESC, n.id DESC`)
 		}
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
@@ -52,7 +48,7 @@ func (app *application) handleNotes(w http.ResponseWriter, r *http.Request) {
 			var bmRaw, tagsRaw string
 			var linksClickable int
 			var groupID sql.NullInt64
-			if err := rows.Scan(&n.ID, &n.Title, &n.Content, &n.Type, &linksClickable, &groupID, &bmRaw, &tagsRaw, &n.DueAt, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			if err := rows.Scan(&n.ID, &n.Title, &n.Content, &n.Type, &linksClickable, &groupID, &bmRaw, &tagsRaw, &n.DueAt, &n.CreatedAt, &n.UpdatedAt, &n.Snippet); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}

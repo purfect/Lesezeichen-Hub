@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+  <style>
+    body { width: auto; min-width: 360px; max-width: 520px; }
+    .row { display: flex; gap: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Lesezeichen Hub – Einstellungen</h1>
+  <form id="options-form">
+    <label>Adresse des Hubs
+      <input id="hub-url" type="url" placeholder="http://127.0.0.1:3333" required />
+    </label>
+    <p class="status">Nur lokale Adressen (127.0.0.1 oder localhost) sind erlaubt. Der Port steht in <code>lesezeichen.ini</code>.</p>
+    <div class="row">
+      <button class="primary" type="submit">Speichern</button>
+      <button id="test" class="ghost" type="button">Verbindung testen</button>
+    </div>
+  </form>
+  <p id="status" class="status" aria-live="polite"></p>
+
+  <script src="api.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

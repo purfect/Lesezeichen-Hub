@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>Lesezeichen Hub</h1>
+    <div class="header-actions">
+      <button id="open-hub" class="link" type="button">Hub öffnen</button>
+      <button id="open-options" class="link" type="button" title="Einstellungen" aria-label="Einstellungen">⚙</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" type="button" role="tab" data-tab="bookmark" aria-selected="true">Lesezeichen</button>
+    <button class="tab" type="button" role="tab" data-tab="note" aria-selected="false">Notiz</button>
+  </nav>
+
+  <p id="existing" class="hint hidden"></p>
+
+  <form id="bookmark-form" data-panel="bookmark">
+    <label>Gruppe <select name="group" required></select></label>
+    <label>Titel <input name="title" maxlength="120" required /></label>
+    <label>URL <input name="url" type="url" required /></label>
+    <label>Notiz <textarea name="notes" maxlength="500" placeholder="Optional"></textarea></label>
+    <label>Tags <input name="tags" list="tag-suggestions" placeholder="Kommagetrennt" /></label>
+    <label>Wiedervorlage
+      <span class="date-row">
+        <input name="remind_at" type="date" />
+        <button class="ghost clear-date" type="button">Leeren</button>
+      </span>
+    </label>
+    <div class="checks">
+      <label><input name="favorite" type="checkbox" /> Favorit</label>
+      <label><input name="pinned" type="checkbox" /> Angepinnt</label>
+    </div>
+    <button class="primary" type="submit">Lesezeichen speichern</button>
+  </form>
+
+  <form id="note-form" class="hidden" data-panel="note">
+    <label>Titel <input name="title" maxlength="200" required /></label>
+    <label>Inhalt <textarea name="content" rows="6"></textarea></label>
+    <label>Tags <input name="tags" placeholder="Kommagetrennt" /></label>
+    <label>Fälligkeitsdatum
+      <span class="date-row">
+        <input name="due_at" type="date" />
+        <button class="ghost clear-date" type="button">Leeren</button>
+      </span>
+    </label>
+    <label id="link-bookmark-wrap" class="check hidden"><input name="link_bookmark" type="checkbox" checked /> Mit vorhandenem Lesezeichen verknüpfen</label>
+    <button class="primary" type="submit">Notiz speichern</button>
+  </form>
+
+  <datalist id="tag-suggestions"></datalist>
+  <p id="status" class="status" aria-live="polite"></p>
+
+  <script src="api.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

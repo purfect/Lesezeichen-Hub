@@ -19,6 +19,8 @@ Die Anwendung laeuft komplett lokal, bietet Gruppen, Tags, Favoriten, Wiedervorl
 - Lesezeichen mit Titel, URL, Notiz, Tags und Datum
 - Favoriten und angepinnte Eintraege
 - Suche ueber Titel, URL, Notizen, Tags und Gruppen
+- Volltextsuche (SQLite FTS5) ueber Lesezeichen und Notizinhalte mit hervorgehobenen Treffern; Vault-Inhalte werden nicht indiziert
+- Automatische taegliche Vollsicherung in einen waehlbaren Ordner (Standard: `backups` neben `data.db`), aeltere Sicherungen werden automatisch entfernt
 - Öffnungs- und Nutzungsstatistik fuer Lesezeichen
 - Silberpreisverlauf mit gespeichertem Silberankauf in EUR/g und günstigstem 1oz-Angebot
 - Schnellfilter fuer Gruppen, Tags, Favoriten, Pins und faellige Wiedervorlagen
@@ -133,6 +135,24 @@ Hinweise:
 - Das Script fragt erst Gruppe, Titel, Notiz und Tags ab und sendet dann an /api/bookmarks.
 - Der Speicherdialog merkt die zuletzt verwendete Gruppe und bietet bereits verwendete Tags als Vorschläge an.
 - Wenn noch keine Gruppen existieren, zuerst im Hub eine Gruppe anlegen.
+
+## Browser-Erweiterung fuer Firefox und Chrome
+
+Im Ordner `browser-extension` liegt eine Erweiterung (Manifest V3), die unveraendert in Firefox (ab 128) und Chrome/Edge laeuft.
+
+Funktionen:
+
+- Toolbar-Popup (auch per Alt+Shift+B): aktuelle Seite als Lesezeichen speichern (Gruppe, Titel, Notiz, Tags mit Vorschlaegen, Wiedervorlage, Favorit, Angepinnt) oder als Notiz (markierter Text wird uebernommen, Faelligkeitsdatum, optional mit vorhandenem Lesezeichen verknuepft)
+- Hinweis, wenn die Seite bereits im Hub gespeichert ist
+- Kontextmenue: Seite speichern, Link speichern, Auswahl als Notiz speichern (verwendet die zuletzt genutzte Gruppe)
+- Einstellungen: Hub-Adresse (Standard `http://127.0.0.1:3333`, nur 127.0.0.1/localhost) mit Verbindungstest
+
+Installation:
+
+- **Chrome/Edge:** `chrome://extensions` bzw. `edge://extensions` oeffnen, Entwicklermodus einschalten, **Entpackte Erweiterung laden** und den Ordner `browser-extension` waehlen.
+- **Firefox:** `about:debugging#/runtime/this-firefox` oeffnen, **Temporaeres Add-on laden** und `browser-extension/manifest.json` waehlen. Temporaere Add-ons bleiben bis zum Neustart aktiv; fuer eine dauerhafte Installation muss die Erweiterung (als ZIP des Ordnerinhalts) ueber addons.mozilla.org signiert werden, oder in Firefox Developer Edition/ESR wird `xpinstall.signatures.required` auf `false` gesetzt.
+
+Chrome meldet beim Laden Warnungen zu `background.scripts` und `browser_specific_settings`; diese Eintraege sind fuer Firefox bestimmt und werden von Chrome ignoriert.
 
 Browser-Lesezeichen lassen sich über den HTML-Export von Firefox, Edge oder Chrome importieren. Die Ordnerstruktur wird in Gruppen übernommen; vorhandene Lesezeichen mit derselben Gruppe und URL werden wie bei anderen Importen als Konflikt behandelt.
 
