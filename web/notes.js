@@ -608,6 +608,7 @@ function openEditor(note, prefillTitle = "") {
         </span>
         <textarea id="editor-content" class="${type === "code" ? "is-code" : ""}" placeholder="${type === "checklist" ? esc(checklistPlaceholder) : "Inhalt der Notiz…"}">${esc(content)}</textarea>
       </label>
+      <p id="editor-autosave-status" class="editor-autosave-status" aria-live="polite">${isNew ? "Automatisches Speichern ist nach dem Erstellen aktiv." : (type === "vault" ? "Vault-Notizen werden nicht automatisch gespeichert." : "Änderungen werden automatisch gespeichert.")}</p>
       <label id="editor-links-clickable-wrap" class="note-editor-checkbox${type === "code" || type === "vault" ? " hidden" : ""}">
         <input id="editor-links-clickable" type="checkbox" ${linksClickable ? "checked" : ""} />
         URLs in Text- und Checklisten-Notizen klickbar machen
@@ -692,13 +693,13 @@ function scheduleEditorAutosave() {
   const type = document.getElementById("editor-type")?.value;
   if (type === "vault") {
     state.revision++;
-    setStatus("Vault-Notizen werden nicht automatisch gespeichert.");
+    setAutosaveStatus("Vault-Notizen werden nicht automatisch gespeichert.");
     return;
   }
 
   const revision = ++state.revision;
   state.failedRevision = null;
-  setStatus("Änderungen ausstehend…");
+  setAutosaveStatus("Änderungen ausstehend…");
   state.timer = setTimeout(() => queueEditorAutosave(state, revision), 800);
 }
 
@@ -725,7 +726,7 @@ function queueEditorAutosave(state, revision) {
       };
       if (!body.title) {
         state.failedRevision = revision;
-        if (state === editorAutosave) setStatus("Bitte einen Titel eingeben, um automatisch zu speichern.", true);
+        if (state === editorAutosave) setAutosaveStatus("Bitte einen Titel eingeben, um automatisch zu speichern.", true);
         return;
       }
 
@@ -733,7 +734,7 @@ function queueEditorAutosave(state, revision) {
         await request(`/api/notes/${state.noteId}`, { method: "PUT", body });
         state.savedRevision = revision;
         if (state === editorAutosave) {
-          setStatus("Automatisch gespeichert.");
+          setAutosaveStatus(`Automatisch gespeichert um ${new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}.`);
           try {
             await reloadNotes();
           } catch {
@@ -743,7 +744,7 @@ function queueEditorAutosave(state, revision) {
       } catch (err) {
         if (state === editorAutosave) {
           state.failedRevision = revision;
-          setStatus(err.message || "Autospeichern fehlgeschlagen.", true);
+          setAutosaveStatus(err.message || "Autospeichern fehlgeschlagen.", true);
         }
       }
     });
@@ -1123,6 +1124,13 @@ function todayDueValue() {
 function formatDueDate(value) {
   const [year, month, day] = value.split("-");
   return `${day}.${month}.${year}`;
+}
+
+function setAutosaveStatus(msg, isErr = false) {
+  const el = document.getElementById("editor-autosave-status");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.toggle("is-error", isErr);
 }
 
 function setStatus(msg, isErr = false) {
