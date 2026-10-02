@@ -262,6 +262,10 @@ func (app *application) handleNoteRoutes(w http.ResponseWriter, r *http.Request)
 			writeErr(w, http.StatusNotFound, fmt.Errorf("notiz nicht gefunden"))
 			return
 		}
+		if _, err := app.db.ExecContext(r.Context(), `DELETE FROM bookmarks WHERE url = ?`, fmt.Sprintf("/static/notes.html?note_id=%d", noteID)); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 
 	default:

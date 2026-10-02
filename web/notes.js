@@ -2,6 +2,7 @@
 let allNotes = [];
 let allNoteGroups = []; // user-defined note groups
 let allBookmarks = [];   // flat list from /api/state
+let bookmarkGroups = []; // real bookmark groups from /api/state
 let activeNoteId = null;
 let isEditing = false;
 let searchDebounce = null;
@@ -26,6 +27,7 @@ const els = {
   detailHead:      document.getElementById("detail-head"),
   detailTitleLabel:document.getElementById("detail-title-label"),
   btnCopy:         document.getElementById("btn-copy"),
+  btnBookmark:     document.getElementById("btn-bookmark"),
   btnEdit:         document.getElementById("btn-edit"),
   btnDelete:       document.getElementById("btn-delete"),
   detailBody:      document.getElementById("notes-detail-body"),
@@ -45,6 +47,7 @@ async function init() {
     ]);
     allNotes      = notesRes.notes || [];
     allBookmarks  = (stateRes.groups || []).flatMap(g => g.bookmarks || []);
+    bookmarkGroups = (stateRes.groups || []).filter(g => g.id > 0);
     allNoteGroups = groupsRes.note_groups || [];
     updateTitleCounter();
     renderFilteredList();
@@ -439,6 +442,7 @@ async function selectNote(id) {
 function renderNoteView(note) {
   els.detailHead.classList.remove("hidden");
   els.detailTitleLabel.textContent = note.title;
+  els.btnBookmark.textContent = findNoteBookmark(note.id) ? "Lesezeichen ✓" : "Als Lesezeichen";
 
   const bookmarkIdSet = new Set(allBookmarks.map(b => b.id));
   const linkedBookmarks = allBookmarks.filter(b =>
@@ -828,10 +832,14 @@ async function saveNote(existingId, existingBookmarkIds) {
 }
 
 async function deleteNote(id) {
-  if (!confirm("Notiz wirklich löschen?")) return;
+  const question = findNoteBookmark(id)
+    ? "Notiz wirklich löschen? Das zugehörige Lesezeichen wird ebenfalls entfernt."
+    : "Notiz wirklich löschen?";
+  if (!confirm(question)) return;
   try {
     setStatus("Lösche…");
     await request(`/api/notes/${id}`, { method: "DELETE" });
+    allBookmarks = allBookmarks.filter(b => b.url !== noteBookmarkURL(id));
     activeNoteId = null;
     await reloadNotes();
     resetDetail();
@@ -883,6 +891,69 @@ els.btnEdit.addEventListener("click", () => {
 
 els.btnDelete.addEventListener("click", () => {
   if (activeNoteId) deleteNote(activeNoteId);
+});
+
+function noteBookmarkURL(noteId) {
+  return `/static/notes.html?note_id=${noteId}`;
+}
+
+function findNoteBookmark(noteId) {
+  return allBookmarks.find(b => b.url === noteBookmarkURL(noteId));
+}
+
+els.btnBookmark.addEventListener("click", () => {
+  const note = allNotes.find(n => n.id === activeNoteId);
+  if (!note) return;
+
+  const existing = findNoteBookmark(note.id);
+  if (existing) {
+    const groupName = bookmarkGroups.find(g => g.id === existing.group_id)?.name || "Unsortiert";
+    setStatus(`Bereits als Lesezeichen "${existing.title}" in Gruppe "${groupName}" vorhanden${existing.favorite ? " (Schnellwahl)" : ""}.`);
+    return;
+  }
+  if (bookmarkGroups.length === 0) {
+    setStatus("Bitte zuerst in der Lesezeichenansicht eine Gruppe anlegen.", true);
+    return;
+  }
+
+  const openPanel = document.getElementById("note-bookmark-panel");
+  if (openPanel) {
+    openPanel.remove();
+    return;
+  }
+  els.detailBody.insertAdjacentHTML("afterbegin", `
+    <form id="note-bookmark-panel" class="vault-panel note-bookmark-panel">
+      <select id="note-bookmark-group" class="vault-input" aria-label="Lesezeichen-Gruppe">
+        ${bookmarkGroups.map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join("")}
+      </select>
+      <label class="note-bookmark-favorite">
+        <input id="note-bookmark-favorite" type="checkbox" />
+        In Schnellwahl
+      </label>
+      <button type="submit" class="btn-edit">Lesezeichen anlegen</button>
+      <button type="button" id="note-bookmark-cancel" class="btn-cancel">Abbrechen</button>
+    </form>
+  `);
+  const panel = document.getElementById("note-bookmark-panel");
+  document.getElementById("note-bookmark-cancel").addEventListener("click", () => panel.remove());
+  panel.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = {
+      group_id: Number(document.getElementById("note-bookmark-group").value),
+      title: note.title,
+      url: noteBookmarkURL(note.id),
+      favorite: document.getElementById("note-bookmark-favorite").checked,
+    };
+    try {
+      const created = await request("/api/bookmarks", { method: "POST", body });
+      allBookmarks.push({ ...body, id: created.id });
+      panel.remove();
+      els.btnBookmark.textContent = "Lesezeichen ✓";
+      setStatus(body.favorite ? "Lesezeichen angelegt und in die Schnellwahl gelegt." : "Lesezeichen angelegt.");
+    } catch (err) {
+      setStatus(err.message || "Lesezeichen konnte nicht angelegt werden.", true);
+    }
+  });
 });
 
 els.btnCopy.addEventListener("click", async () => {

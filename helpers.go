@@ -20,7 +20,7 @@ func validateURL(raw string) error {
 	if err != nil {
 		return fmt.Errorf("url ist ungueltig")
 	}
-	if u.Scheme == "" && strings.HasPrefix(u.Path, "/modules/") {
+	if u.Scheme == "" && u.Host == "" && (strings.HasPrefix(u.Path, "/modules/") || u.Path == "/static/notes.html") {
 		return nil
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {

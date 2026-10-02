@@ -566,6 +566,19 @@
       box-shadow: 0 0 0 3px var(--ring);
     }
 
+    .note-bookmark-panel { margin: 0 0 12px; }
+
+    .note-bookmark-favorite {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.86rem;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .note-bookmark-favorite input { accent-color: var(--accent); }
+
     .note-meta-row {
       display: flex;
       align-items: center;
@@ -766,6 +779,7 @@
         <span id="detail-title-label" class="notes-detail-title"></span>
         <div class="notes-detail-actions">
           <button id="btn-copy" class="btn-copy btn-edit" type="button">Kopieren</button>
+          <button id="btn-bookmark" class="btn-edit" type="button">Als Lesezeichen</button>
           <button id="btn-edit" class="btn-edit" type="button">Bearbeiten</button>
           <button id="btn-delete" class="btn-delete" type="button">Löschen</button>
         </div>
