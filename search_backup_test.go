@@ -26,7 +26,7 @@ func TestHandleSearchUsesFullTextIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	search := func(q string) (ids []int64, notes []struct {
+	search := func(q string, includeNotes ...bool) (ids []int64, notes []struct {
 		ID      int64  `json:"id"`
 		Title   string `json:"title"`
 		Snippet string `json:"snippet"`
@@ -34,7 +34,11 @@ func TestHandleSearchUsesFullTextIndex(t *testing.T) {
 		t.Helper()
 		response := httptest.NewRecorder()
 		app := &application{db: db}
-		app.handleSearch(response, httptest.NewRequest(http.MethodGet, "/api/search?q="+q, nil))
+		path := "/api/search?q=" + q
+		if len(includeNotes) > 0 && includeNotes[0] {
+			path += "&include_notes=true"
+		}
+		app.handleSearch(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusOK {
 			t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 		}
@@ -59,6 +63,10 @@ func TestHandleSearchUsesFullTextIndex(t *testing.T) {
 		t.Fatalf("combined long/short term ids = %v, want one bookmark", ids)
 	}
 	_, notes := search("kubernetes")
+	if len(notes) != 0 {
+		t.Fatalf("notes without include_notes = %#v, want none", notes)
+	}
+	_, notes = search("kubernetes", true)
 	if len(notes) != 1 || notes[0].Title != "Deployment" {
 		t.Fatalf("notes = %#v, want only the non-vault note", notes)
 	}
@@ -69,7 +77,7 @@ func TestHandleSearchUsesFullTextIndex(t *testing.T) {
 	if _, err := db.Exec(`UPDATE notes SET content = 'Nichts mehr' WHERE title = 'Deployment'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, notes := search("kubernetes"); len(notes) != 0 {
+	if _, notes := search("kubernetes", true); len(notes) != 0 {
 		t.Fatalf("notes after update = %#v, want none", notes)
 	}
 }

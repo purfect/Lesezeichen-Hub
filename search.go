@@ -156,30 +156,32 @@ func (app *application) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snippet, order := "''", "n.updated_at DESC"
-	if q.match != "" {
-		snippet, order = ftsSnippetSQL, ftsNotesRankSQL
-	}
-	where, args = q.where("notes_fts", []string{"title", "content", "tags"})
-	rows, err = app.db.QueryContext(r.Context(),
-		`SELECT n.id, n.title, n.type, `+snippet+` FROM notes_fts JOIN notes n ON n.id = notes_fts.rowid
-		 WHERE `+where+` ORDER BY `+order+` LIMIT 20`, args...)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var hit noteHit
-		if err := rows.Scan(&hit.ID, &hit.Title, &hit.Type, &hit.Snippet); err != nil {
+	if r.URL.Query().Get("include_notes") == "true" {
+		snippet, order := "''", "n.updated_at DESC"
+		if q.match != "" {
+			snippet, order = ftsSnippetSQL, ftsNotesRankSQL
+		}
+		where, args = q.where("notes_fts", []string{"title", "content", "tags"})
+		rows, err = app.db.QueryContext(r.Context(),
+			`SELECT n.id, n.title, n.type, `+snippet+` FROM notes_fts JOIN notes n ON n.id = notes_fts.rowid
+				 WHERE `+where+` ORDER BY `+order+` LIMIT 20`, args...)
+		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
-		notes = append(notes, hit)
-	}
-	if err := rows.Err(); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
+		defer rows.Close()
+		for rows.Next() {
+			var hit noteHit
+			if err := rows.Scan(&hit.ID, &hit.Title, &hit.Type, &hit.Snippet); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			notes = append(notes, hit)
+		}
+		if err := rows.Err(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"bookmark_ids": bookmarkIDs, "notes": notes})

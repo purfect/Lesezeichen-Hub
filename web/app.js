@@ -6,6 +6,7 @@ const state = {
   search: "",
   searchHits: null,
   includeArchivedInSearch: false,
+  includeNotesInSearch: false,
   filters: { groupId: null, tag: "", favorite: false, pinned: false, due: false },
   savedViews: loadSavedViews(),
   collapsedGroupIds: loadCollapsedGroupIds(),
@@ -105,6 +106,7 @@ const els = {
   search: document.getElementById("search"),
   searchClear: document.getElementById("search-clear"),
   searchArchive: document.getElementById("search-archive"),
+  searchNotes: document.getElementById("search-notes"),
 };
 
 init();
@@ -157,6 +159,10 @@ function init() {
   });
   els.searchArchive.addEventListener("change", (e) => {
     state.includeArchivedInSearch = Boolean(e.target.checked);
+    render();
+  });
+  els.searchNotes.addEventListener("change", (e) => {
+    state.includeNotesInSearch = Boolean(e.target.checked);
     render();
   });
   els.searchClear.addEventListener("click", clearSearch);
@@ -293,25 +299,29 @@ function scheduleSearchReload() {
   _searchReloadTimer = setTimeout(() => runSearch(state.search), 250);
 }
 
-let _searchRequestQuery = null;
+let _searchRequestKey = null;
 
 async function runSearch(query) {
-  if (!query || _searchRequestQuery === query) return;
-  _searchRequestQuery = query;
+  const includeNotes = state.includeNotesInSearch;
+  const requestKey = `${query}|notes:${includeNotes}`;
+  if (!query || _searchRequestKey === requestKey) return;
+  _searchRequestKey = requestKey;
   try {
-    const result = await request(`/api/search?q=${encodeURIComponent(query)}`);
-    if (state.search !== query) return;
-    state.searchHits = { query, bookmarkIds: new Set(result.bookmark_ids || []), notes: result.notes || [] };
+    const result = await request(`/api/search?q=${encodeURIComponent(query)}&include_notes=${includeNotes}`);
+    if (state.search !== query || state.includeNotesInSearch !== includeNotes) return;
+    state.searchHits = { query, includeNotes, bookmarkIds: new Set(result.bookmark_ids || []), notes: result.notes || [] };
     render();
   } catch (error) {
-    if (state.search === query) setStatus(error.message, true);
+    if (state.search === query && state.includeNotesInSearch === includeNotes) setStatus(error.message, true);
   } finally {
-    if (_searchRequestQuery === query) _searchRequestQuery = null;
+    if (_searchRequestKey === requestKey) _searchRequestKey = null;
   }
 }
 
 function currentSearchHits() {
-  return state.search && state.searchHits?.query === state.search ? state.searchHits : null;
+  return state.search && state.searchHits?.query === state.search && state.searchHits?.includeNotes === state.includeNotesInSearch
+    ? state.searchHits
+    : null;
 }
 
 function scheduleSearchTracking(term) {
@@ -1589,7 +1599,7 @@ function filterBookmarks(bookmarks) {
 }
 
 function renderNoteHits() {
-  const notes = currentSearchHits()?.notes || [];
+  const notes = state.includeNotesInSearch ? currentSearchHits()?.notes || [] : [];
   els.noteHitsList.innerHTML = "";
   els.noteHitsBlock.classList.toggle("hidden", notes.length === 0);
   for (const note of notes) {
@@ -1666,9 +1676,11 @@ function toggleQuickFilter(name) {
 function resetFilters() {
   state.search = "";
   state.includeArchivedInSearch = false;
+  state.includeNotesInSearch = false;
   state.filters = { groupId: null, tag: "", favorite: false, pinned: false, due: false };
   els.search.value = "";
   els.searchArchive.checked = false;
+  els.searchNotes.checked = false;
   els.savedView.value = "";
   syncFilterControls();
   updateSearchClearButton();
@@ -1691,7 +1703,7 @@ function saveCurrentView() {
     els.savedViewName.focus();
     return;
   }
-  const view = { name, search: state.search, includeArchived: state.includeArchivedInSearch, filters: { ...state.filters } };
+  const view = { name, search: state.search, includeArchived: state.includeArchivedInSearch, includeNotes: state.includeNotesInSearch, filters: { ...state.filters } };
   const existingIndex = state.savedViews.findIndex((item) => item.name.toLowerCase() === name.toLowerCase());
   if (existingIndex >= 0) state.savedViews[existingIndex] = view;
   else state.savedViews.push(view);
@@ -1707,9 +1719,11 @@ function applySelectedView() {
   if (!view) return;
   state.search = view.search || "";
   state.includeArchivedInSearch = Boolean(view.includeArchived);
+  state.includeNotesInSearch = Boolean(view.includeNotes);
   state.filters = { groupId: null, tag: "", favorite: false, pinned: false, due: false, ...(view.filters || {}) };
   els.search.value = state.search;
   els.searchArchive.checked = state.includeArchivedInSearch;
+  els.searchNotes.checked = state.includeNotesInSearch;
   syncFilterControls();
   updateSearchClearButton();
   render();
@@ -1764,7 +1778,7 @@ function matchesSearch(...parts) {
 
 function updateSearchInfo(groupCount, matchCount, archivedMatchCount = 0) {
   if (!state.search) {
-    els.searchInfo.textContent = "Suche in Titeln, URLs, Notizen und Gruppen. Mehrere Begriffe werden kombiniert.";
+    els.searchInfo.textContent = "Suche in Lesezeichen. Separate Notizen können zusätzlich durchsucht werden.";
     return;
   }
 
