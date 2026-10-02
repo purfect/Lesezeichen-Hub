@@ -1345,6 +1345,58 @@ func TestModuleCatalogCachesMetadataButFetchesVersionsLive(t *testing.T) {
 	}
 }
 
+func TestModuleCatalogDoesNotCacheFailedWebDetails(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	previousDelay := moduleWebRetryDelay
+	moduleWebRetryDelay = 0
+	t.Cleanup(func() { moduleWebRetryDelay = previousDelay })
+
+	var mu sync.Mutex
+	detailStatus := http.StatusTooManyRequests
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/orgs/Lesezeichen-Hub/repos":
+			writeErr(w, http.StatusForbidden, errors.New("API rate limit exceeded"))
+		case "/orgs/Lesezeichen-Hub/repositories":
+			_, _ = w.Write([]byte(`<a href="/Lesezeichen-Hub/Gorilla">Gorilla</a>`))
+		case "/Lesezeichen-Hub/Gorilla":
+			if detailStatus != http.StatusOK {
+				w.WriteHeader(detailStatus)
+				return
+			}
+			_, _ = w.Write([]byte(`<a href="/topics/spiel">spiel</a>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	app := &application{db: db, moduleAPIBase: server.URL, moduleWebBase: server.URL}
+	modules, err := app.fetchModuleCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modules) != 1 || modules[0].Category != "Sonstiges" {
+		t.Fatalf("modules = %+v, want uncategorized while rate limited", modules)
+	}
+
+	mu.Lock()
+	detailStatus = http.StatusOK
+	mu.Unlock()
+	modules, err = app.fetchModuleCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modules) != 1 || modules[0].Category != "Spiele" {
+		t.Fatalf("modules = %+v, want category after failed request was not cached", modules)
+	}
+}
+
 func TestModuleCatalogReadsOptionalVersionManifest(t *testing.T) {
 	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {

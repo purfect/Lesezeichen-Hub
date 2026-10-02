@@ -225,7 +225,12 @@ func (app *application) handleModuleImport(w http.ResponseWriter, r *http.Reques
 const (
 	moduleMetadataCacheTTL = 24 * time.Hour
 	moduleFetchConcurrency = 8
+	// github.com HTML pages are rate limited much more aggressively than raw files.
+	moduleWebFetchConcurrency = 2
+	moduleWebFetchRetries     = 2
 )
+
+var moduleWebRetryDelay = time.Second
 
 func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule, error) {
 	return app.loadCatalogModules(ctx, nil)
@@ -480,15 +485,28 @@ func (app *application) fetchModuleRepositoriesFromWeb(ctx context.Context) ([]g
 		}
 		uncached = append(uncached, index)
 	}
-	fetched := make([]githubRepository, len(uncached))
-	forEachParallel(len(uncached), moduleFetchConcurrency, func(position int) {
+	fetched := make([]githubRepository, 0, len(uncached))
+	var fetchedMu sync.Mutex
+	forEachParallel(len(uncached), moduleWebFetchConcurrency, func(position int) {
 		repository := &repositories[uncached[position]]
-		topics, defaultBranch := app.fetchModuleDetailsFromWeb(ctx, repository.HTMLURL)
+		topics, defaultBranch, ok := app.fetchModuleDetailsFromWeb(ctx, repository.HTMLURL)
+		if !ok {
+			// Keep expired metadata instead of losing the category on a failed request.
+			stale, _ := app.cachedModuleMetadata(repository.Name)
+			repository.Description = stale.Description
+			repository.Topics = stale.Topics
+			if stale.DefaultBranch != "" {
+				repository.DefaultBranch = stale.DefaultBranch
+			}
+			return
+		}
 		repository.Topics = topics
 		if defaultBranch != "" {
 			repository.DefaultBranch = defaultBranch
 		}
-		fetched[position] = *repository
+		fetchedMu.Lock()
+		fetched = append(fetched, *repository)
+		fetchedMu.Unlock()
 	})
 	app.storeModuleMetadata(fetched)
 	for _, index := range uncached {
@@ -499,23 +517,35 @@ func (app *application) fetchModuleRepositoriesFromWeb(ctx context.Context) ([]g
 	return repositories, nil
 }
 
-func (app *application) fetchModuleDetailsFromWeb(ctx context.Context, repositoryURL string) ([]string, string) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repositoryURL, nil)
-	if err != nil {
-		return nil, ""
-	}
-	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
-	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
-	if err != nil || response.StatusCode != http.StatusOK {
-		if response != nil {
-			response.Body.Close()
+func (app *application) fetchModuleDetailsFromWeb(ctx context.Context, repositoryURL string) ([]string, string, bool) {
+	var body []byte
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, repositoryURL, nil)
+		if err != nil {
+			return nil, "", false
 		}
-		return nil, ""
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return nil, ""
+		req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+		response, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		if err == nil && response.StatusCode == http.StatusOK {
+			body, err = io.ReadAll(io.LimitReader(response.Body, 1<<20))
+			response.Body.Close()
+			if err == nil {
+				break
+			}
+		} else if response != nil {
+			response.Body.Close()
+			if response.StatusCode != http.StatusTooManyRequests && response.StatusCode < 500 {
+				return nil, "", false
+			}
+		}
+		if attempt >= moduleWebFetchRetries {
+			return nil, "", false
+		}
+		select {
+		case <-ctx.Done():
+			return nil, "", false
+		case <-time.After(moduleWebRetryDelay * time.Duration(attempt+1)):
+		}
 	}
 	pattern := regexp.MustCompile(`href="/topics/([A-Za-z0-9-]+)"`)
 	seen := make(map[string]bool)
@@ -530,9 +560,9 @@ func (app *application) fetchModuleDetailsFromWeb(ctx context.Context, repositor
 	branchPattern := regexp.MustCompile(`href="/` + regexp.QuoteMeta(moduleGithubOwner) + `/[A-Za-z0-9_.-]+/commits/([A-Za-z0-9._/-]+?)/?"`)
 	branchMatch := branchPattern.FindSubmatch(body)
 	if len(branchMatch) < 2 {
-		return topics, ""
+		return topics, "", true
 	}
-	return topics, string(branchMatch[1])
+	return topics, string(branchMatch[1]), true
 }
 
 func (app *application) installCatalogModule(ctx context.Context, repositoryName string) (catalogModule, error) {
