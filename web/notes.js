@@ -11,6 +11,8 @@ let viewMode = "list"; // "list" | "groups"
 let expandedGroupKeys = new Set();
 let pendingBookmarkIds = []; // set when arriving from main page via URL param
 const decryptedVaultCache = new Map();
+let editorAutosave = null;
+let editorAutosaveQueue = Promise.resolve();
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 const els = {
@@ -419,7 +421,8 @@ async function saveChecklistToggle(note, newContent) {
 }
 
 // ── Select / view a note ──────────────────────────────────────────────────
-function selectNote(id) {
+async function selectNote(id) {
+  if (isEditing) await flushEditorAutosave();
   activeNoteId = id;
   isEditing = false;
   const note = allNotes.find(n => n.id === id);
@@ -550,6 +553,15 @@ function renderNoteView(note) {
 // ── Editor ────────────────────────────────────────────────────────────────
 function openEditor(note, prefillTitle = "") {
   isEditing = true;
+  if (editorAutosave?.timer) clearTimeout(editorAutosave.timer);
+  editorAutosave = {
+    noteId: note?.id || null,
+    revision: 0,
+    savedRevision: 0,
+    failedRevision: null,
+    manualSaving: false,
+    timer: null,
+  };
   els.detailHead.classList.add("hidden");
 
   const isNew  = !note;
@@ -617,7 +629,7 @@ function openEditor(note, prefillTitle = "") {
         </span>
       </label>
       <div class="editor-actions">
-        <button type="button" id="btn-cancel-edit" class="btn-cancel">Abbrechen</button>
+        <button type="button" id="btn-cancel-edit" class="btn-cancel">${isNew ? "Abbrechen" : "Schließen"}</button>
         <button type="submit" class="btn-save">${isNew ? "Erstellen" : "Speichern"}</button>
       </div>
     </form>
@@ -641,15 +653,18 @@ function openEditor(note, prefillTitle = "") {
   addStepBtn.addEventListener("click", () => {
     const prefix = contentArea.value && !contentArea.value.endsWith("\n") ? "\n" : "";
     contentArea.value += `${prefix}- [ ] `;
+    scheduleEditorAutosave();
     contentArea.focus();
     contentArea.selectionStart = contentArea.selectionEnd = contentArea.value.length;
   });
 
   document.getElementById("btn-clear-due").addEventListener("click", () => {
     document.getElementById("editor-due-at").value = "";
+    scheduleEditorAutosave();
   });
 
-  document.getElementById("btn-cancel-edit").addEventListener("click", () => {
+  document.getElementById("btn-cancel-edit").addEventListener("click", async () => {
+    await flushEditorAutosave();
     isEditing = false;
     pendingBookmarkIds = [];
     if (activeNoteId) {
@@ -663,9 +678,105 @@ function openEditor(note, prefillTitle = "") {
     e.preventDefault();
     await saveNote(note?.id, note?.bookmark_ids);
   });
+
+  const editorForm = document.getElementById("note-editor-form");
+  editorForm.addEventListener("input", scheduleEditorAutosave);
+  editorForm.addEventListener("change", scheduleEditorAutosave);
+}
+
+function scheduleEditorAutosave() {
+  const state = editorAutosave;
+  if (!state?.noteId || !isEditing || state.manualSaving) return;
+  if (state.timer) clearTimeout(state.timer);
+
+  const type = document.getElementById("editor-type")?.value;
+  if (type === "vault") {
+    state.revision++;
+    setStatus("Vault-Notizen werden nicht automatisch gespeichert.");
+    return;
+  }
+
+  const revision = ++state.revision;
+  state.failedRevision = null;
+  setStatus("Änderungen ausstehend…");
+  state.timer = setTimeout(() => queueEditorAutosave(state, revision), 800);
+}
+
+function queueEditorAutosave(state, revision) {
+  state.timer = null;
+  editorAutosaveQueue = editorAutosaveQueue
+    .catch(() => {})
+    .then(async () => {
+      if (state !== editorAutosave || !isEditing || revision !== state.revision) return;
+      const type = document.getElementById("editor-type")?.value;
+      if (type === "vault") return;
+
+      const groupRaw = document.getElementById("editor-group").value;
+      const tags = document.getElementById("editor-tags").value.split(",").map(tag => tag.trim()).filter(Boolean);
+      const body = {
+        title: document.getElementById("editor-title").value.trim(),
+        content: document.getElementById("editor-content").value,
+        type,
+        group_id: groupRaw === "" ? null : Number(groupRaw),
+        tags,
+        bookmark_ids: allNotes.find(note => note.id === state.noteId)?.bookmark_ids || [],
+        links_clickable: document.getElementById("editor-links-clickable").checked,
+        due_at: document.getElementById("editor-due-at").value,
+      };
+      if (!body.title) {
+        state.failedRevision = revision;
+        if (state === editorAutosave) setStatus("Bitte einen Titel eingeben, um automatisch zu speichern.", true);
+        return;
+      }
+
+      try {
+        await request(`/api/notes/${state.noteId}`, { method: "PUT", body });
+        state.savedRevision = revision;
+        if (state === editorAutosave) {
+          setStatus("Automatisch gespeichert.");
+          try {
+            await reloadNotes();
+          } catch {
+            // The note is saved even if refreshing the sidebar fails.
+          }
+        }
+      } catch (err) {
+        if (state === editorAutosave) {
+          state.failedRevision = revision;
+          setStatus(err.message || "Autospeichern fehlgeschlagen.", true);
+        }
+      }
+    });
+  return editorAutosaveQueue;
+}
+
+async function flushEditorAutosave() {
+  const state = editorAutosave;
+  if (!state?.noteId) return;
+  while (state === editorAutosave && state.revision > state.savedRevision) {
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = null;
+    const revision = state.revision;
+    if (document.getElementById("editor-type")?.value !== "vault") {
+      await queueEditorAutosave(state, revision);
+      if (state.failedRevision === revision) break;
+    } else {
+      break;
+    }
+  }
 }
 
 async function saveNote(existingId, existingBookmarkIds) {
+  const autosaveState = editorAutosave;
+  if (autosaveState) {
+    autosaveState.manualSaving = true;
+    if (autosaveState.timer) {
+      clearTimeout(autosaveState.timer);
+      autosaveState.timer = null;
+    }
+  }
+  await editorAutosaveQueue;
+
   const title   = document.getElementById("editor-title").value.trim();
   const type    = document.getElementById("editor-type").value;
   const groupRaw = document.getElementById("editor-group").value;
@@ -705,10 +816,12 @@ async function saveNote(existingId, existingBookmarkIds) {
     }
     pendingBookmarkIds = [];
     await reloadNotes();
+    isEditing = false;
     if (activeNoteId) selectNote(activeNoteId);
     setStatus("Gespeichert.");
     setTimeout(() => setStatus(""), 2000);
   } catch (err) {
+    if (autosaveState && autosaveState === editorAutosave) autosaveState.manualSaving = false;
     setStatus(err.message || "Fehler beim Speichern.", true);
   }
 }
@@ -739,7 +852,8 @@ function resetDetail() {
 }
 
 // ── Event wiring ──────────────────────────────────────────────────────────
-els.btnNewNote.addEventListener("click", () => {
+els.btnNewNote.addEventListener("click", async () => {
+  await flushEditorAutosave();
   activeNoteId = null;
   pendingBookmarkIds = [];
   document.querySelectorAll(".note-item").forEach(el => el.classList.remove("active"));
