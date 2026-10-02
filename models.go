@@ -39,6 +39,13 @@ type application struct {
 	silverPricesAt     time.Time
 	backupMu           sync.Mutex
 	backupLastErr      string
+	moduleMetaMu       sync.Mutex
+	moduleMeta         map[string]moduleMetadataEntry
+}
+
+type moduleMetadataEntry struct {
+	repository githubRepository
+	fetchedAt  time.Time
 }
 
 type metalPricesPayload struct {

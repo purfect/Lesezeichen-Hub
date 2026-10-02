@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1278,6 +1279,66 @@ func TestModuleCatalogFallsBackWhenGithubRateLimitIsExhausted(t *testing.T) {
 	}
 	if modules[1].Name != "NAT_Rechner" || modules[1].Category != "Werkzeuge" || modules[1].DefaultBranch != "master" {
 		t.Fatalf("fallback module = %+v", modules[1])
+	}
+}
+
+func TestModuleCatalogCachesMetadataButFetchesVersionsLive(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	rateLimited := false
+	version := "1.0.0"
+	detailHits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/orgs/Lesezeichen-Hub/repos":
+			if rateLimited {
+				writeErr(w, http.StatusForbidden, errors.New("API rate limit exceeded"))
+				return
+			}
+			writeJSON(w, http.StatusOK, []githubRepository{{Name: "Gorilla", Description: "Affen-Spiel", Topics: []string{"spiel"}, DefaultBranch: "main"}})
+		case "/orgs/Lesezeichen-Hub/repositories":
+			_, _ = w.Write([]byte(`<a href="/Lesezeichen-Hub/Gorilla">Gorilla</a><a href="/Lesezeichen-Hub/Neu">Neu</a>`))
+		case "/Lesezeichen-Hub/Gorilla", "/Lesezeichen-Hub/Neu":
+			detailHits++
+			_, _ = w.Write([]byte(`<a href="/topics/werkzeug">werkzeug</a>`))
+		case "/Lesezeichen-Hub/Gorilla/main/version.json", "/Lesezeichen-Hub/Neu/main/version.json":
+			writeJSON(w, http.StatusOK, moduleVersionManifest{Version: version})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	app := &application{db: db, moduleAPIBase: server.URL, moduleWebBase: server.URL, moduleManifestBase: server.URL}
+	if _, err := app.fetchModuleCatalog(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	rateLimited = true
+	version = "2.0.0"
+	mu.Unlock()
+
+	modules, err := app.fetchModuleCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modules) != 2 {
+		t.Fatalf("modules = %+v, want new module from live list", modules)
+	}
+	if modules[0].Name != "Gorilla" || modules[0].Description != "Affen-Spiel" || modules[0].Category != "Spiele" || modules[0].Version != "2.0.0" {
+		t.Fatalf("cached module = %+v, want cached metadata with live version", modules[0])
+	}
+	if modules[1].Name != "Neu" || modules[1].Category != "Werkzeuge" || modules[1].Version != "2.0.0" {
+		t.Fatalf("new module = %+v", modules[1])
+	}
+	if detailHits != 1 {
+		t.Fatalf("detail page hits = %d, want 1 (only uncached module)", detailHits)
 	}
 }
 

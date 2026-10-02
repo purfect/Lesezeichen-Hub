@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -221,35 +222,38 @@ func (app *application) handleModuleImport(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, module)
 }
 
+const (
+	moduleMetadataCacheTTL = 24 * time.Hour
+	moduleFetchConcurrency = 8
+)
+
 func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule, error) {
-	apiBase := strings.TrimRight(app.moduleAPIBase, "/")
-	if apiBase == "" {
-		apiBase = githubAPIBase
+	return app.loadCatalogModules(ctx, nil)
+}
+
+// findCatalogModule loads the live repository list but fetches the version manifest only for the matching module.
+func (app *application) findCatalogModule(ctx context.Context, names ...string) (catalogModule, error) {
+	modules, err := app.loadCatalogModules(ctx, func(name string) bool {
+		for _, candidate := range names {
+			if strings.EqualFold(name, candidate) {
+				return true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		return catalogModule{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/orgs/"+moduleGithubOwner+"/repos?per_page=100&type=public", nil)
+	if len(modules) == 0 {
+		return catalogModule{}, fmt.Errorf("repository gehoert nicht zum verfuegbaren Modulkatalog")
+	}
+	return modules[0], nil
+}
+
+func (app *application) loadCatalogModules(ctx context.Context, include func(name string) bool) ([]catalogModule, error) {
+	repositories, err := app.fetchModuleRepositories(ctx)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
-	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("modulkatalog konnte nicht geladen werden: %w", err)
-	}
-	defer response.Body.Close()
-	var repositories []githubRepository
-	if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests {
-		repositories, err = app.fetchModuleRepositoriesFromWeb(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("GitHub-API-Limit erreicht und Ersatzliste konnte nicht geladen werden: %w", err)
-		}
-	} else if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub antwortet mit Status %d", response.StatusCode)
-	} else if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&repositories); err != nil {
-		return nil, fmt.Errorf("ungueltige GitHub-Antwort: %w", err)
 	}
 	installed := make(map[string]localModule)
 	rows, err := app.db.QueryContext(ctx, `SELECT id, name, installed_version, managed FROM modules`)
@@ -273,25 +277,111 @@ func (app *application) fetchModuleCatalog(ctx context.Context) ([]catalogModule
 		if repository.Archived || repository.Name == "" || strings.HasPrefix(repository.Name, ".") || repository.DefaultBranch == "" {
 			continue
 		}
-		module := catalogModule{
+		if include != nil && !include(repository.Name) {
+			continue
+		}
+		modules = append(modules, catalogModule{
 			Name:          repository.Name,
 			Category:      catalogModuleCategory(repository.Topics),
 			Description:   repository.Description,
 			RepositoryURL: repository.HTMLURL,
 			DefaultBranch: repository.DefaultBranch,
-		}
-		module.Version = app.fetchModuleVersion(ctx, repository.Name, repository.DefaultBranch)
-		if local, ok := installed[strings.ToLower(repository.Name)]; ok {
+		})
+	}
+	forEachParallel(len(modules), moduleFetchConcurrency, func(index int) {
+		modules[index].Version = app.fetchModuleVersion(ctx, modules[index].Name, modules[index].DefaultBranch)
+	})
+	for index := range modules {
+		module := &modules[index]
+		if local, ok := installed[strings.ToLower(module.Name)]; ok {
 			module.Installed = true
 			module.LocalID = local.ID
 			module.LocalURL = fmt.Sprintf("/modules/%d/index.html", local.ID)
 			module.InstalledVersion = local.InstalledVersion
 			module.UpdateAvailable = local.Managed && local.InstalledVersion != "" && module.Version != "" && isNewerVersion(local.InstalledVersion, module.Version)
 		}
-		modules = append(modules, module)
 	}
 	sort.Slice(modules, func(i, j int) bool { return strings.ToLower(modules[i].Name) < strings.ToLower(modules[j].Name) })
 	return modules, nil
+}
+
+func forEachParallel(count, limit int, fn func(index int)) {
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, limit)
+	for index := 0; index < count; index++ {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func(index int) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			fn(index)
+		}(index)
+	}
+	wg.Wait()
+}
+
+func (app *application) cachedModuleMetadata(name string) (githubRepository, bool) {
+	app.moduleMetaMu.Lock()
+	defer app.moduleMetaMu.Unlock()
+	entry, ok := app.moduleMeta[strings.ToLower(name)]
+	if !ok || time.Since(entry.fetchedAt) > moduleMetadataCacheTTL {
+		return entry.repository, false
+	}
+	return entry.repository, true
+}
+
+func (app *application) storeModuleMetadata(repositories []githubRepository) {
+	app.moduleMetaMu.Lock()
+	defer app.moduleMetaMu.Unlock()
+	if app.moduleMeta == nil {
+		app.moduleMeta = make(map[string]moduleMetadataEntry)
+	}
+	now := time.Now()
+	for _, repository := range repositories {
+		key := strings.ToLower(repository.Name)
+		// The web fallback cannot read descriptions, so keep one learned from the API.
+		if repository.Description == "" {
+			repository.Description = app.moduleMeta[key].repository.Description
+		}
+		app.moduleMeta[key] = moduleMetadataEntry{repository: repository, fetchedAt: now}
+	}
+}
+
+// fetchModuleRepositories always loads the repository list live so new modules appear immediately.
+func (app *application) fetchModuleRepositories(ctx context.Context) ([]githubRepository, error) {
+	apiBase := strings.TrimRight(app.moduleAPIBase, "/")
+	if apiBase == "" {
+		apiBase = githubAPIBase
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/orgs/"+moduleGithubOwner+"/repos?per_page=100&type=public", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	req.Header.Set("Cache-Control", "no-cache")
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("modulkatalog konnte nicht geladen werden: %w", err)
+	}
+	defer response.Body.Close()
+	var repositories []githubRepository
+	if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests {
+		repositories, err = app.fetchModuleRepositoriesFromWeb(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("GitHub-API-Limit erreicht und Ersatzliste konnte nicht geladen werden: %w", err)
+		}
+	} else if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub antwortet mit Status %d", response.StatusCode)
+	} else if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&repositories); err != nil {
+		return nil, fmt.Errorf("ungueltige GitHub-Antwort: %w", err)
+	} else {
+		app.storeModuleMetadata(repositories)
+	}
+	return repositories, nil
 }
 
 func catalogModuleCategory(topics []string) string {
@@ -313,12 +403,15 @@ func (app *application) fetchModuleVersion(ctx context.Context, repository, bran
 	if manifestBase == "" {
 		return ""
 	}
-	endpoint := fmt.Sprintf("%s/%s/%s/%s/version.json", manifestBase, moduleGithubOwner, url.PathEscape(repository), url.PathEscape(branch))
+	// Query parameter and headers bypass CDN/proxy caches so the version check is always live.
+	endpoint := fmt.Sprintf("%s/%s/%s/%s/version.json?nocache=%d", manifestBase, moduleGithubOwner, url.PathEscape(repository), url.PathEscape(branch), time.Now().UnixNano())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return ""
 	}
 	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
 	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
 		return ""
@@ -344,6 +437,7 @@ func (app *application) fetchModuleRepositoriesFromWeb(ctx context.Context) ([]g
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
+	req.Header.Set("Cache-Control", "no-cache")
 	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
@@ -374,11 +468,32 @@ func (app *application) fetchModuleRepositoriesFromWeb(ctx context.Context) ([]g
 	if len(repositories) == 0 {
 		return nil, fmt.Errorf("keine Repositorys gefunden")
 	}
+	uncached := make([]int, 0, len(repositories))
 	for index := range repositories {
-		topics, defaultBranch := app.fetchModuleDetailsFromWeb(ctx, repositories[index].HTMLURL)
-		repositories[index].Topics = topics
+		if cached, ok := app.cachedModuleMetadata(repositories[index].Name); ok {
+			repositories[index].Description = cached.Description
+			repositories[index].Topics = cached.Topics
+			if cached.DefaultBranch != "" {
+				repositories[index].DefaultBranch = cached.DefaultBranch
+			}
+			continue
+		}
+		uncached = append(uncached, index)
+	}
+	fetched := make([]githubRepository, len(uncached))
+	forEachParallel(len(uncached), moduleFetchConcurrency, func(position int) {
+		repository := &repositories[uncached[position]]
+		topics, defaultBranch := app.fetchModuleDetailsFromWeb(ctx, repository.HTMLURL)
+		repository.Topics = topics
 		if defaultBranch != "" {
-			repositories[index].DefaultBranch = defaultBranch
+			repository.DefaultBranch = defaultBranch
+		}
+		fetched[position] = *repository
+	})
+	app.storeModuleMetadata(fetched)
+	for _, index := range uncached {
+		if cached, _ := app.cachedModuleMetadata(repositories[index].Name); cached.Description != "" {
+			repositories[index].Description = cached.Description
 		}
 	}
 	return repositories, nil
@@ -421,19 +536,9 @@ func (app *application) fetchModuleDetailsFromWeb(ctx context.Context, repositor
 }
 
 func (app *application) installCatalogModule(ctx context.Context, repositoryName string) (catalogModule, error) {
-	modules, err := app.fetchModuleCatalog(ctx)
+	selected, err := app.findCatalogModule(ctx, repositoryName)
 	if err != nil {
 		return catalogModule{}, err
-	}
-	var selected catalogModule
-	for _, module := range modules {
-		if strings.EqualFold(module.Name, repositoryName) {
-			selected = module
-			break
-		}
-	}
-	if selected.Name == "" {
-		return catalogModule{}, fmt.Errorf("repository gehoert nicht zum verfuegbaren Modulkatalog")
 	}
 	if selected.Installed {
 		return catalogModule{}, fmt.Errorf("modul ist bereits eingerichtet")
@@ -798,19 +903,9 @@ func (app *application) updateCatalogModule(ctx context.Context, moduleID int64)
 		return catalogModule{}, err
 	}
 	repositoryName := filepath.Base(currentTopLevel)
-	modules, err := app.fetchModuleCatalog(ctx)
+	selected, err := app.findCatalogModule(ctx, moduleName, repositoryName)
 	if err != nil {
 		return catalogModule{}, err
-	}
-	var selected catalogModule
-	for _, module := range modules {
-		if strings.EqualFold(module.Name, moduleName) || strings.EqualFold(module.Name, repositoryName) {
-			selected = module
-			break
-		}
-	}
-	if selected.Name == "" {
-		return catalogModule{}, fmt.Errorf("repository gehoert nicht zum verfuegbaren Modulkatalog")
 	}
 	archivePath, err := app.downloadCatalogModuleArchive(ctx, selected, installBase)
 	if err != nil {
