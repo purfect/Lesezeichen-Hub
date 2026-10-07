@@ -82,6 +82,40 @@ func TestHandleSearchUsesFullTextIndex(t *testing.T) {
 	}
 }
 
+func TestHandleSearchRefreshesIndexForNewBookmarks(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TRIGGER bookmarks_fts_ai`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO bookmarks(title, url, notes, tags) VALUES ('Just added', 'https://example.test', '', '')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	app := &application{db: db}
+	app.handleSearch(response, httptest.NewRequest(http.MethodGet, "/api/search?q=added", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		BookmarkIDs []int64 `json:"bookmark_ids"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.BookmarkIDs) != 1 || payload.BookmarkIDs[0] != id {
+		t.Fatalf("bookmark IDs = %v, want newly added ID %d", payload.BookmarkIDs, id)
+	}
+}
+
 func TestAutoBackupWritesAndPrunes(t *testing.T) {
 	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"strings"
@@ -71,6 +72,47 @@ func initializeSearchIndex(db *sql.DB) error {
 	return tx.Commit()
 }
 
+// refreshSearchIndex reconciles the FTS tables with their source tables before
+// searching. Triggers normally keep them in sync; this also catches writes made
+// by imports or external tools that bypassed those triggers.
+func refreshSearchIndex(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	statements := []string{
+		`DELETE FROM bookmarks_fts
+			WHERE rowid NOT IN (SELECT id FROM bookmarks)
+				OR EXISTS (
+					SELECT 1 FROM bookmarks b WHERE b.id = bookmarks_fts.rowid
+						AND (b.title IS NOT bookmarks_fts.title OR b.url IS NOT bookmarks_fts.url
+							OR b.notes IS NOT bookmarks_fts.notes OR b.tags IS NOT bookmarks_fts.tags)
+				)`,
+		`INSERT INTO bookmarks_fts(rowid, title, url, notes, tags)
+			SELECT b.id, b.title, b.url, b.notes, b.tags FROM bookmarks b
+			WHERE NOT EXISTS (SELECT 1 FROM bookmarks_fts f WHERE f.rowid = b.id)`,
+		`DELETE FROM notes_fts
+			WHERE rowid NOT IN (SELECT id FROM notes)
+				OR EXISTS (
+					SELECT 1 FROM notes n WHERE n.id = notes_fts.rowid
+						AND (n.title IS NOT notes_fts.title
+							OR (CASE WHEN n.type = 'vault' THEN '' ELSE n.content END) IS NOT notes_fts.content
+							OR n.tags IS NOT notes_fts.tags)
+				)`,
+		`INSERT INTO notes_fts(rowid, title, content, tags)
+			SELECT n.id, n.title, CASE WHEN n.type = 'vault' THEN '' ELSE n.content END, n.tags FROM notes n
+			WHERE NOT EXISTS (SELECT 1 FROM notes_fts f WHERE f.rowid = n.id)`,
+	}
+	for _, stmt := range statements {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 type ftsQuery struct {
 	match string
 	likes []string
@@ -132,6 +174,10 @@ func (app *application) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := parseFTSQuery(r.URL.Query().Get("q"))
 	if q.empty() {
 		writeJSON(w, http.StatusOK, map[string]any{"bookmark_ids": bookmarkIDs, "notes": notes})
+		return
+	}
+	if err := refreshSearchIndex(r.Context(), app.db); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
 
