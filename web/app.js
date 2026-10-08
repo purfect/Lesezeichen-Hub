@@ -166,6 +166,9 @@ function init() {
     render();
   });
   els.searchClear.addEventListener("click", clearSearch);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.search) scheduleSearchReload();
+  });
   els.autoBackupForm.addEventListener("submit", onSaveAutoBackupSettings);
   els.autoBackupRun.addEventListener("click", onRunAutoBackup);
   document.addEventListener("keydown", onGlobalKeyDown);
@@ -307,8 +310,15 @@ async function runSearch(query) {
   if (!query || _searchRequestKey === requestKey) return;
   _searchRequestKey = requestKey;
   try {
-    const result = await request(`/api/search?q=${encodeURIComponent(query)}&include_notes=${includeNotes}`);
+    // bookmarks added elsewhere (extension, other tab) are only known after reloading the state
+    const [result, payload] = await Promise.all([
+      request(`/api/search?q=${encodeURIComponent(query)}&include_notes=${includeNotes}`),
+      request("/api/state"),
+    ]);
     if (state.search !== query || state.includeNotesInSearch !== includeNotes) return;
+    state.groups = payload.groups ?? [];
+    populateGroupSelect();
+    populateFilterOptions();
     state.searchHits = { query, includeNotes, bookmarkIds: new Set(result.bookmark_ids || []), notes: result.notes || [] };
     render();
   } catch (error) {
