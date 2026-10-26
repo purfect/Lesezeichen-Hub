@@ -16,14 +16,32 @@
     <div>
       <p class="eyebrow">Persönlicher Browser Hub</p>
       <h1>Archiv</h1>
-      <p class="search-info">Archivierte Lesezeichen als separate Linkliste.</p>
     </div>
   </header>
 
   <main class="overview-main">
     <section class="panel">
-      <h2>Archivierte Links</h2>
-      <p id="archive-summary" class="search-info"></p>
+      <div class="archive-toolbar" role="search" aria-label="Archiv durchsuchen">
+        <label class="archive-search" for="archive-search">Suche
+          <input id="archive-search" type="search" placeholder="Titel, URL, Tags oder Notizen" autocomplete="off" disabled />
+        </label>
+        <label for="archive-group">Gruppe
+          <select id="archive-group" disabled><option value="">Alle Gruppen</option></select>
+        </label>
+        <label for="archive-sort">Sortierung
+          <select id="archive-sort" disabled>
+            <option value="title">Titel A–Z</option>
+            <option value="newest">Zuletzt aktualisiert</option>
+            <option value="domain">Domain A–Z</option>
+          </select>
+        </label>
+        <label for="archive-page-size">Einträge pro Seite
+          <select id="archive-page-size" disabled>
+            <option value="25">25</option><option value="50">50</option><option value="100">100</option>
+          </select>
+        </label>
+      </div>
+      <p id="archive-summary" class="search-info" role="status"></p>
       <div id="archive-groups" class="archive-groups"></div>
     </section>
   </main>

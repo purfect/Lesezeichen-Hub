@@ -1199,20 +1199,129 @@ button.danger:hover {
   color: var(--muted);
 }
 
+.archive-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(140px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.archive-toolbar label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.archive-toolbar input,
+.archive-toolbar select {
+  width: 100%;
+  min-width: 0;
+}
+
 .archive-groups {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px;
+  gap: 0;
   margin-top: 10px;
+}
+
+.archive-group {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+}
+
+.archive-group summary {
+  display: list-item;
+  padding: 14px 4px;
+  cursor: pointer;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.archive-group summary::marker {
+  color: var(--accent);
+}
+
+.archive-count {
+  display: inline-block;
+  margin-left: 12px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.archive-link-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.archive-link-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(100px, 25%);
+  gap: 6px 16px;
+  align-items: baseline;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.archive-link-list li:nth-child(odd) {
+  background: var(--card-soft);
+}
+
+.archive-domain {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
 }
 
 .archive-link-list a {
   color: #9ed9ff;
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
-.archive-link-list a:hover {
+.archive-link-list a:hover,
+.archive-link-list a:focus-visible {
   text-decoration: underline;
+}
+
+.archive-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 0 16px;
+}
+
+.archive-pagination span {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.archive-pagination button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.archive-pagination button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+@media (max-width: 1000px) {
+  .archive-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .archive-toolbar { grid-template-columns: minmax(0, 1fr); }
+  .archive-link-list li { grid-template-columns: minmax(0, 1fr); }
 }
 
 .edit-dialog {
