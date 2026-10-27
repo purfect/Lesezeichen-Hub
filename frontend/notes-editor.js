@@ -1,9 +1,10 @@
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
+import { TaskList, TaskItem } from '@tiptap/extension-list';
 import DOMPurify from 'dompurify';
 import { Marked } from 'marked';
-import { createElement as createIcon, Bold, Italic, List, ListOrdered, Quote, Link, Code, SquareCode, Undo2, Redo2, X, Check } from 'lucide';
+import { createElement as createIcon, Bold, Italic, List, ListOrdered, ListChecks, Quote, Link, Code, SquareCode, Undo2, Redo2, X, Check } from 'lucide';
 
 const escapeText = text => String(text).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const safeURL = value => {
@@ -19,6 +20,27 @@ const parser = new Marked({
   breaks: true,
   gfm: true,
   renderer: {
+    checkbox: () => '',
+    list(token) {
+      let html = '';
+      let openTag = '';
+      token.items.forEach((item, index) => {
+        const emptyTask = !token.ordered && /^\[[ xX]\]\s*$/.test(item.text);
+        const task = item.task || emptyTask;
+        const checked = emptyTask ? /^\[[xX]\]/.test(item.text) : Boolean(item.checked);
+        const tag = task ? 'task' : token.ordered ? 'ol' : 'ul';
+        if (tag !== openTag) {
+          if (openTag) html += openTag === 'ol' ? '</ol>' : '</ul>';
+          html += tag === 'task' ? '<ul data-type="taskList">' : tag === 'ol' ? `<ol start="${Number(token.start) + index}">` : '<ul>';
+          openTag = tag;
+        }
+        const body = emptyTask ? '<p></p>' : this.parser.parse(item.tokens);
+        html += task
+          ? `<li data-type="taskItem" data-checked="${checked}"><label><input type="checkbox" disabled${checked ? ' checked' : ''}><span></span></label><div>${body || '<p></p>'}</div></li>`
+          : `<li>${body}</li>`;
+      });
+      return html + (openTag === 'ol' ? '</ol>' : '</ul>');
+    },
     html: token => escapeText(token.text),
     image: token => escapeText(token.raw),
     table: token => `<pre><code>${escapeText(token.raw)}</code></pre>`,
@@ -41,8 +63,8 @@ export function legacyMarkdown(source) {
 export function renderMarkdown(source, linksClickable = true) {
   const html = parser.parse(legacyMarkdown(source));
   const clean = DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: ['p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 's', 'del', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'a', 'hr'],
-    ALLOWED_ATTR: ['href', 'target', 'rel', 'start'],
+    ALLOWED_TAGS: ['p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 's', 'del', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'a', 'hr', 'label', 'input', 'div', 'span'],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'start', 'data-type', 'data-checked', 'type', 'checked', 'disabled'],
     ALLOW_DATA_ATTR: false,
   });
   const template = document.createElement('template');
@@ -65,6 +87,10 @@ export function createDocument(element, source, onUpdate) {
     extensions: [StarterKit.configure({
       underline: false,
       link: { openOnClick: false, protocols: ['http', 'https'], isAllowedUri: url => Boolean(safeURL(url)) },
+    }), TaskList, TaskItem.configure({
+      nested: true,
+      HTMLAttributes: { 'data-type': 'taskItem' },
+      a11y: { checkboxLabel: node => `Aufgabe: ${node.textContent || 'Neuer Schritt'}` },
     }), Markdown],
     content: renderMarkdown(source),
     editorProps: { attributes: { class: 'note-rich-content', role: 'textbox', 'aria-label': 'Inhalt der Notiz', 'aria-multiline': 'true' } },
@@ -112,13 +138,21 @@ export function mountEditor(container, source, onUpdate) {
   }
   heading.addEventListener('change', () => {
     const level = Number(heading.value);
-    if (level) editor.chain().focus().setHeading({ level }).run();
-    else editor.chain().focus().setParagraph().run();
+    const selection = document.getSelection();
+    const chain = editor.chain().focus();
+    if (selection?.rangeCount && editor.view.dom.contains(selection.anchorNode) && editor.view.dom.contains(selection.focusNode)) {
+      const anchor = editor.view.posAtDOM(selection.anchorNode, selection.anchorOffset);
+      const focus = editor.view.posAtDOM(selection.focusNode, selection.focusOffset);
+      chain.setTextSelection({ from: Math.min(anchor, focus), to: Math.max(anchor, focus) });
+    }
+    if (level) chain.setHeading({ level }).run();
+    else chain.setParagraph().run();
   });
   button('Fett', Bold, () => editor.chain().focus().toggleBold().run(), () => editor.isActive('bold'));
   button('Kursiv', Italic, () => editor.chain().focus().toggleItalic().run(), () => editor.isActive('italic'));
   button('Aufzählung', List, () => editor.chain().focus().toggleBulletList().run(), () => editor.isActive('bulletList'));
   button('Nummerierung', ListOrdered, () => editor.chain().focus().toggleOrderedList().run(), () => editor.isActive('orderedList'));
+  button('Aufgabenliste', ListChecks, () => editor.chain().focus().toggleTaskList().run(), () => editor.isActive('taskList'));
   button('Zitat', Quote, () => editor.chain().focus().toggleBlockquote().run(), () => editor.isActive('blockquote'));
 
   const dialog = document.createElement('dialog');
@@ -177,6 +211,13 @@ export function mountEditor(container, source, onUpdate) {
   updateToolbar();
   return {
     ...adapter,
+    addTask() {
+      const position = editor.state.doc.content.size;
+      editor.chain().focus().insertContentAt(position, {
+        type: 'taskList',
+        content: [{ type: 'taskItem', attrs: { checked: false }, content: [{ type: 'paragraph' }] }],
+      }).setTextSelection(position + 3).run();
+    },
     destroy() {
       adapter.destroy();
       container.replaceChildren();

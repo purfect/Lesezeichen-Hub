@@ -42,6 +42,24 @@ test('Editor keeps untouched source and serializes actual changes including empt
   element.remove();
 });
 
+test('Task editor preserves completed steps, formatting and checklist Markdown', () => {
+  const element = document.body.appendChild(document.createElement('div'));
+  const source = '# Abschnitt\n- [x] Erledigt\n- [ ] Offen\n\n## Morgen\n- [ ] **Wichtig**';
+  const adapter = createDocument(element, source);
+  assert.equal(adapter.getContent(), source);
+  assert.equal(element.querySelectorAll('li[data-type="taskItem"]').length, 3);
+  assert.equal(element.querySelectorAll('input:checked').length, 1);
+  adapter.editor.commands.insertContentAt(2, ' Neu');
+  const saved = adapter.getContent();
+  assert.match(saved, /- \[x\] Erledigt/);
+  assert.match(saved, /- \[ \] Offen/);
+  assert.match(saved, /## Morgen/);
+  assert.match(saved, /\*\*Wichtig/);
+  assert.equal((saved.match(/^- \[[ x]\]/gm) || []).length, 3);
+  adapter.destroy();
+  element.remove();
+});
+
 test('Highlights span inline formatting, normalize accents and clear without changing text', () => {
   const root = document.createElement('div');
   root.innerHTML = '<p>Git<strong>Hub</strong> und Café, 100%.</p>';
@@ -79,4 +97,13 @@ test('Highlight overlap, repeated matches and literal special characters do not 
   assert.equal(root.querySelectorAll('mark').length, 2);
   highlightSearch(root, '');
   assert.equal(root.innerHTML, '<p><a href="https://example.com">ababa [x] 100% Café</a></p>');
+});
+
+test('Empty checklist steps remain visible and keep their checked state', () => {
+  const element = document.body.appendChild(document.createElement('div'));
+  const adapter = createDocument(element, '- [ ]\n- [x]');
+  assert.equal(element.querySelectorAll('li[data-type="taskItem"]').length, 2);
+  assert.equal(element.querySelectorAll('input:checked').length, 1);
+  adapter.destroy();
+  element.remove();
 });

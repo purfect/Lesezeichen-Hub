@@ -30,8 +30,8 @@ test('Toolbar, selection, autosave, undo and type switching preserve the note', 
   await page.getByRole('combobox', { name: 'Absatzformat' }).selectOption('2');
   await expect(rich.locator('h2')).toHaveText('Mein Ablauf');
   await page.locator('#editor-type').selectOption('code');
-  await expect(page.locator('#editor-content')).toBeVisible();
-  await expect(page.locator('#editor-content')).toHaveValue(/## \*\*Mein Ablauf\*\*/);
+  await expect(page.locator('#editor-content')).toBeHidden();
+  await expect(rich.locator('h2')).toHaveText('Mein Ablauf');
   await page.locator('#editor-type').selectOption('note');
   await expect(rich.locator('h2')).toHaveText('Mein Ablauf');
   await page.locator('#btn-cancel-edit').click();
@@ -217,7 +217,7 @@ test('Vault conversion never autosaves plaintext and requires explicit saving', 
   await page.goto('/static/notes.html?new=1');
   await page.locator('#editor-title').fill('Geschützter Entwurf');
   await page.locator('#editor-type').selectOption('vault');
-  await page.locator('#editor-content').fill('Vertraulicher Inhalt');
+  await page.getByRole('textbox', { name: 'Inhalt der Notiz' }).fill('Vertraulicher Inhalt');
   await page.locator('#editor-vault-password').fill('Nur-ein-Testpasswort');
   await page.getByRole('button', { name: 'Erstellen', exact: true }).click();
   await expect(page.locator('#btn-edit')).toBeVisible();
@@ -233,6 +233,98 @@ test('Vault conversion never autosaves plaintext and requires explicit saving', 
   await page.getByRole('button', { name: 'Speichern', exact: true }).click();
   await expect(page.locator('.note-markdown')).toHaveText('Vertraulicher Inhalt');
   expect(await savedContent(request, note.id)).toBe('Vertraulicher Inhalt');
+});
+
+for (const type of ['note', 'annotation', 'code', 'checklist']) {
+  test(`Formatted editor and read view work for ${type}`, async ({ page, request }, testInfo) => {
+    const source = '# Ablauf\n\n## Heute\n\n**Wichtig**\n\n- [x] Fertig\n- [ ] Offen\n\n```js\nconst value = "<tag>";\n```\n\nWeiter';
+    const id = await createNote(request, source, { type });
+    if (type === 'checklist') await page.setViewportSize({ width: 390, height: 1000 });
+    await page.goto(`/static/notes.html?note_id=${id}`);
+    await expect(page.locator('.note-markdown h1')).toHaveText('Ablauf');
+    await expect(page.locator('.note-markdown h2')).toHaveText('Heute');
+    await expect(page.locator('.note-markdown strong')).toHaveText('Wichtig');
+    await page.screenshot({ path: testInfo.outputPath(`${type}-view.png`), fullPage: true });
+    await page.locator('#btn-edit').click();
+    const rich = page.getByRole('textbox', { name: 'Inhalt der Notiz' });
+    await expect(page.locator('.note-format-toolbar')).toBeVisible();
+    await expect(rich.locator('li[data-type="taskItem"]')).toHaveCount(2);
+    await expect(rich.locator('input:checked')).toHaveCount(1);
+    await page.locator('#editor-tags').fill('Metadaten');
+    await expect(page.locator('#editor-autosave-status')).toContainText('Automatisch gespeichert');
+    expect(await savedContent(request, id)).toBe(source);
+    await rich.locator('p').last().click();
+    await expect.poll(() => rich.evaluate(() => window.getSelection()?.anchorNode?.textContent)).toBe('Weiter');
+    await page.getByRole('combobox', { name: 'Absatzformat' }).selectOption('3');
+    await expect(rich.locator('h3')).toHaveText('Weiter');
+    await page.screenshot({ path: testInfo.outputPath(`${type}-editor.png`), fullPage: true });
+    await page.locator('#btn-cancel-edit').click();
+    await expect(page.locator('.note-markdown h3')).toHaveText('Weiter');
+    await expect(page.locator('.note-markdown pre')).toHaveText('const value = "<tag>";\n');
+    const saved = await savedContent(request, id);
+    expect(saved).toContain('- [x] Fertig');
+    expect(saved).toContain('- [ ] Offen');
+    expect(saved).toContain('### Weiter');
+    if (type === 'checklist') {
+      await expect(page.locator('.checklist-progress-label')).toContainText('1 von 2');
+      await page.locator('.checklist-item input').nth(1).check();
+      await expect(page.locator('.checklist-progress-label')).toContainText('2 von 2');
+      await expect.poll(() => savedContent(request, id)).toContain('- [x] Offen');
+      await page.locator('#btn-edit').click();
+      await page.locator('#btn-add-step').click();
+      await page.getByRole('textbox', { name: 'Inhalt der Notiz' }).pressSequentially('Neuer Schritt');
+      await page.locator('#btn-cancel-edit').click();
+      await expect(page.locator('.checklist-progress-label')).toContainText('2 von 3');
+      await expect(page.locator('.checklist-item-text').last()).toContainText('Neuer Schritt');
+    }
+  });
+}
+
+test('Vault formats headings before and after encryption, reload and unlocking', async ({ page, request }) => {
+  await page.goto('/static/notes.html?new=1');
+  await page.locator('#editor-title').fill('Formatierter Vault');
+  await page.locator('#editor-type').selectOption('vault');
+  const rich = page.getByRole('textbox', { name: 'Inhalt der Notiz' });
+  await rich.fill('Vertraulicher Abschnitt');
+  await rich.press('ControlOrMeta+a');
+  await page.getByRole('combobox', { name: 'Absatzformat' }).selectOption('2');
+  await page.locator('#editor-vault-password').fill('Vault-Format-Test');
+  await page.getByRole('button', { name: 'Erstellen', exact: true }).click();
+  await expect(page.locator('.note-markdown h2')).toHaveText('Vertraulicher Abschnitt');
+  const notes = await (await request.get('/api/notes')).json();
+  const note = notes.notes.find(note => note.title === 'Formatierter Vault');
+  expect(note.content).toMatch(/^vault:v1:/);
+  expect(note.content).not.toContain('Vertraulicher Abschnitt');
+  await page.goto(`/static/notes.html?note_id=${note.id}`);
+  await expect(page.locator('.note-markdown')).toHaveCount(0);
+  await page.locator('#vault-password').fill('Vault-Format-Test');
+  await page.locator('#btn-vault-unlock').click();
+  await expect(page.locator('.note-markdown h2')).toHaveText('Vertraulicher Abschnitt');
+  page.on('dialog', dialog => dialog.accept('Vault-Format-Test'));
+  await page.locator('#btn-edit').click();
+  await expect(rich.locator('h2')).toHaveText('Vertraulicher Abschnitt');
+  await rich.press('ControlOrMeta+a');
+  await page.getByRole('button', { name: 'Fett', exact: true }).click();
+  await page.locator('#editor-vault-password').fill('Vault-Format-Test');
+  await page.getByRole('button', { name: 'Speichern', exact: true }).click();
+  await expect(page.locator('.note-markdown h2 strong')).toHaveText('Vertraulicher Abschnitt');
+  expect(await savedContent(request, note.id)).not.toBe(note.content);
+  expect(await savedContent(request, note.id)).not.toContain('Vertraulicher Abschnitt');
+});
+
+test('Workflow counts and toggles only actual tasks, not code samples', async ({ page, request }) => {
+  const source = '# Ablauf\n\n```\n- [ ] Nur ein Codebeispiel\n```\n\n{code}\n- [x] Ebenfalls Code\n{code}\n\n## Aufgaben\n\n- [ ] **Erster Schritt**\n  - [x] Unteraufgabe\n- [ ] Zweiter Schritt';
+  const id = await createNote(request, source, { type: 'checklist' });
+  await page.goto(`/static/notes.html?note_id=${id}`);
+  await expect(page.locator('.checklist-progress-label')).toContainText('1 von 3');
+  await expect(page.locator('.checklist-list h2')).toHaveText('Aufgaben');
+  await expect(page.locator('.checklist-list strong')).toHaveText('Erster Schritt');
+  await page.locator('.checklist-item input').last().check();
+  await expect(page.locator('.checklist-progress-label')).toContainText('2 von 3');
+  const saved = await savedContent(request, id);
+  expect(saved).toContain('- [x] Zweiter Schritt');
+  expect(saved).toContain('- [ ] Nur ein Codebeispiel');
+  expect(saved).toContain('- [x] Ebenfalls Code');
 });
 
 for (const theme of ['modern', 'terminal']) {

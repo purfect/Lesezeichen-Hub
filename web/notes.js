@@ -374,7 +374,7 @@ function renderTextNoteContent(content, linksClickable = false) {
 }
 
 function renderChecklistView(note) {
-  const lines = parseChecklist(note.content);
+  const items = parseChecklist(note.content).filter(line => line.kind === "item");
   const { done, total } = checklistProgress(note.content);
   const percent = total > 0 ? Math.round((done / total) * 100) : 0;
 
@@ -394,31 +394,22 @@ function renderChecklistView(note) {
     </form>
   `;
 
-  // blank lines in the raw text intentionally have no visual effect; only "# heading" lines create grouping space
-  const bodyHtml = lines
-    .filter(line => line.kind !== "blank")
-    .map(line => renderChecklistLine(line, note.links_clickable !== false))
-    .join("");
+  const template = document.createElement("template");
+  template.innerHTML = NoteEditor.renderMarkdown(note.content, note.links_clickable !== false);
+  template.content.querySelectorAll('li[data-type="taskItem"]').forEach((item, index) => {
+    const line = items[index];
+    const checkbox = item.querySelector(':scope > label > input');
+    if (!line || !checkbox) return;
+    item.classList.add("checklist-item");
+    item.classList.toggle("is-done", line.done);
+    item.dataset.line = line.index;
+    item.querySelector(':scope > div')?.classList.add("checklist-item-text");
+    checkbox.disabled = false;
+    checkbox.setAttribute("aria-label", `Aufgabe: ${line.text}`);
+  });
+  const bodyHtml = template.innerHTML;
 
-  return `<div class="checklist-view">${progressHtml}${addRowHtml}<div class="checklist-list">${bodyHtml}</div></div>`;
-}
-
-function renderChecklistLine(line, linksClickable) {
-  if (line.kind === "heading") {
-    return `<div class="checklist-group-title">${linksClickable ? linkifyText(line.text) : esc(line.text)}</div>`;
-  }
-  if (line.kind === "item") {
-    return `
-      <label class="checklist-item${line.done ? " is-done" : ""}" data-line="${line.index}">
-        <input type="checkbox" ${line.done ? "checked" : ""} />
-        <span class="checklist-item-text">${linksClickable ? linkifyText(line.text) : esc(line.text)}</span>
-      </label>
-    `;
-  }
-  if (line.kind === "text") {
-    return `<div class="checklist-text-line">${linksClickable ? linkifyText(line.text) : esc(line.text)}</div>`;
-  }
-  return "";
+  return `<div class="checklist-view">${progressHtml}${addRowHtml}<div class="checklist-list note-markdown">${bodyHtml}</div></div>`;
 }
 
 function addChecklistItem(note, text) {
@@ -433,13 +424,8 @@ function toggleChecklistLine(note, lineIndex) {
   const lines = String(note.content || "").split("\n");
   const line = lines[lineIndex];
   if (line === undefined) return;
-  if (/^\s*-\s*\[x\]/i.test(line)) {
-    lines[lineIndex] = line.replace(/\[x\]/i, "[ ]");
-  } else if (/^\s*-\s*\[ \]/.test(line)) {
-    lines[lineIndex] = line.replace(/\[ \]/, "[x]");
-  } else {
-    return;
-  }
+  if (!/^\s*[-+*]\s+\[[ xX]\]/.test(line)) return;
+  lines[lineIndex] = line.replace(/^(\s*[-+*]\s+\[)([ xX])(\])/, (_match, prefix, status, suffix) => `${prefix}${status === " " ? "x" : " "}${suffix}`);
   saveChecklistToggle(note, lines.join("\n"));
 }
 
@@ -491,18 +477,13 @@ function renderNoteView(note) {
   let contentHtml;
   if (note.type === "vault") {
     const unlocked = decryptedVaultCache.get(note.id);
-    contentHtml = unlocked
-      ? `<pre class="note-view-content is-code">${esc(unlocked)}</pre>`
+    contentHtml = decryptedVaultCache.has(note.id)
+      ? `<div class="note-view-content note-markdown">${NoteEditor.renderMarkdown(unlocked, note.links_clickable !== false)}</div>`
       : `<div class="note-view-content">🔒 Diese Vault-Notiz ist verschlüsselt. Zum Anzeigen bitte entsperren.</div>`;
-  } else if (note.type === "code") {
-    contentHtml = `<pre class="note-view-content is-code">${esc(note.content)}</pre>`;
-  } else if (note.type === "note") {
-    contentHtml = `<div class="note-view-content note-markdown">${NoteEditor.renderMarkdown(note.content, note.links_clickable !== false)}</div>`;
   } else if (note.type === "checklist") {
     contentHtml = renderChecklistView(note);
   } else {
-    const content = note.links_clickable !== false ? linkifyText(note.content) : esc(note.content);
-    contentHtml = `<div class="note-view-content">${content}</div>`;
+    contentHtml = `<div class="note-view-content note-markdown">${NoteEditor.renderMarkdown(note.content, note.links_clickable !== false)}</div>`;
   }
 
   const tagsHtml = (note.tags || []).length > 0
@@ -577,7 +558,7 @@ function renderNoteView(note) {
   if (note.type === "checklist") {
     document.querySelectorAll(".checklist-item").forEach(el => {
       el.addEventListener("click", (e) => {
-        if (e.target.closest("a")) return;
+        if (e.target.closest("a") || e.target.closest(".checklist-item") !== el) return;
         e.preventDefault();
         toggleChecklistLine(note, Number(el.dataset.line));
       });
@@ -617,7 +598,6 @@ function openEditor(note, prefillTitle = "") {
   const groupId = note?.group_id ?? "";
   const linksClickable = note?.links_clickable !== false;
   const dueAt   = toDueInputValue(note?.due_at);
-  const checklistPlaceholder = "# Einarbeitung\n- [ ] Repository klonen\n- [ ] README lesen\n- [ ] Lokale Umgebung einrichten\n\n# Erste Schritte\n- [ ] Ansprechpartner kontaktieren\n- [ ] Ticket-System-Zugang einrichten";
 
   const groupOptionsHtml = allNoteGroups
     .map(g => `<option value="${g.id}" ${String(groupId) === String(g.id) ? "selected" : ""}>${esc(g.name)}</option>`)
@@ -648,16 +628,13 @@ function openEditor(note, prefillTitle = "") {
       </label>
       <div class="note-editor-content-field">
         <label for="editor-content">Inhalt</label>
-        <span id="editor-content-hint" class="checklist-hint${type === "checklist" ? "" : " hidden"}">
-          Zeile "# Abschnitt" für Überschriften, "- [ ] Schritt" für Aufgaben.
-        </span>
-        <textarea id="editor-content" class="${type === "code" ? "is-code" : ""}" placeholder="${type === "checklist" ? esc(checklistPlaceholder) : "Inhalt der Notiz…"}">${esc(content)}</textarea>
+        <textarea id="editor-content" hidden>${esc(content)}</textarea>
         <div id="editor-rich-content"></div>
       </div>
       <p id="editor-autosave-status" class="editor-autosave-status" aria-live="polite">${isNew ? "Automatisches Speichern ist nach dem Erstellen aktiv." : (type === "vault" ? "Vault-Notizen werden nicht automatisch gespeichert." : "Änderungen werden automatisch gespeichert.")}</p>
-      <label id="editor-links-clickable-wrap" class="note-editor-checkbox${type === "code" || type === "vault" ? " hidden" : ""}">
+      <label id="editor-links-clickable-wrap" class="note-editor-checkbox">
         <input id="editor-links-clickable" type="checkbox" ${linksClickable ? "checked" : ""} />
-        URLs in Text- und Checklisten-Notizen klickbar machen
+        Links in dieser Notiz klickbar machen
       </label>
       <button type="button" id="btn-add-step" class="btn-add-step ${type === "checklist" ? "" : "hidden"}">+ Schritt hinzufügen</button>
       <label id="vault-password-wrap" class="${type === "vault" ? "" : "hidden"}">
@@ -683,22 +660,11 @@ function openEditor(note, prefillTitle = "") {
   `;
 
   const typeSelect  = document.getElementById("editor-type");
-  const contentArea = document.getElementById("editor-content");
   const vaultWrap   = document.getElementById("vault-password-wrap");
-  const linksClickableWrap = document.getElementById("editor-links-clickable-wrap");
-  const contentHint = document.getElementById("editor-content-hint");
   const addStepBtn  = document.getElementById("btn-add-step");
   const richContainer = document.getElementById("editor-rich-content");
   let previousType = type;
-  function syncEditorType() {
-    if (richNoteEditor) contentArea.value = richNoteEditor.getContent();
-    closeRichEditor();
-    const formatted = typeSelect.value === "note";
-    contentArea.hidden = formatted;
-    richContainer.hidden = !formatted;
-    if (formatted) richNoteEditor = NoteEditor.mountEditor(richContainer, contentArea.value, scheduleEditorAutosave);
-  }
-  syncEditorType();
+  richNoteEditor = NoteEditor.mountEditor(richContainer, content, scheduleEditorAutosave);
   document.querySelector('.note-editor-content-field > label').addEventListener('click', event => {
     if (richNoteEditor) { event.preventDefault(); richNoteEditor.editor.commands.focus(); }
   });
@@ -708,21 +674,12 @@ function openEditor(note, prefillTitle = "") {
       return;
     }
     previousType = typeSelect.value;
-    syncEditorType();
-    contentArea.classList.toggle("is-code", typeSelect.value === "code");
     vaultWrap.classList.toggle("hidden", typeSelect.value !== "vault");
-    linksClickableWrap.classList.toggle("hidden", typeSelect.value === "code" || typeSelect.value === "vault");
     const isChecklist = typeSelect.value === "checklist";
-    contentHint.classList.toggle("hidden", !isChecklist);
     addStepBtn.classList.toggle("hidden", !isChecklist);
-    contentArea.placeholder = isChecklist ? checklistPlaceholder : "Inhalt der Notiz…";
   });
   addStepBtn.addEventListener("click", () => {
-    const prefix = contentArea.value && !contentArea.value.endsWith("\n") ? "\n" : "";
-    contentArea.value += `${prefix}- [ ] `;
-    scheduleEditorAutosave();
-    contentArea.focus();
-    contentArea.selectionStart = contentArea.selectionEnd = contentArea.value.length;
+    richNoteEditor.addTask();
   });
 
   document.getElementById("btn-clear-due").addEventListener("click", () => {
@@ -856,6 +813,7 @@ async function saveNote(existingId, existingBookmarkIds) {
   const groupRaw = document.getElementById("editor-group").value;
   const groupId  = groupRaw === "" ? null : Number(groupRaw);
   let content   = editorContent();
+  const plainContent = content;
   const tagsRaw = document.getElementById("editor-tags").value;
   const tags    = tagsRaw.split(",").map(t => t.trim()).filter(Boolean);
   const linksClickable = document.getElementById("editor-links-clickable").checked;
@@ -891,6 +849,8 @@ async function saveNote(existingId, existingBookmarkIds) {
       activeNoteId = res.id;
     }
     pendingBookmarkIds = [];
+    if (type === "vault") decryptedVaultCache.set(activeNoteId, plainContent);
+    else decryptedVaultCache.delete(activeNoteId);
     await reloadNotes();
     closeRichEditor();
     isEditing = false;
@@ -1113,15 +1073,32 @@ function typeLabel(type) {
 
 // Parses simple checklist markup: "- [ ] text" / "- [x] text" items, "# text" group headings, rest as plain lines.
 function parseChecklist(content) {
-  const lines = String(content || "").split("\n");
+  const source = String(content || "");
+  const lines = source.split("\n");
+  const legacyCode = [...source.matchAll(/\{code\}[\s\S]*?\{code\}/g)].map(match => ({ start: match.index, end: match.index + match[0].length }));
+  let offset = 0;
+  let fence = null;
   return lines.map((line, index) => {
     const trimmed = line.trim();
-    const itemMatch = trimmed.match(/^-\s*\[( |x|X)\]\s*(.*)$/);
+    const start = offset;
+    offset += line.length + 1;
+    if (legacyCode.some(block => block.start < offset && block.end > start)) return { index, kind: "text", text: line };
+    const marker = trimmed.match(/^(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+      return { index, kind: "text", text: line };
+    }
+    if (marker) {
+      fence = marker[1];
+      return { index, kind: "text", text: line };
+    }
+    const itemMatch = trimmed.match(/^[-+*]\s+\[( |x|X)\]\s*(.*)$/);
     if (itemMatch) {
       return { index, kind: "item", done: itemMatch[1].toLowerCase() === "x", text: itemMatch[2] };
     }
-    if (trimmed.startsWith("# ")) {
-      return { index, kind: "heading", text: trimmed.slice(2) };
+    const headingMatch = trimmed.match(/^#{1,6}\s+(.+)$/);
+    if (headingMatch) {
+      return { index, kind: "heading", text: headingMatch[1] };
     }
     if (trimmed === "") {
       return { index, kind: "blank", text: "" };
