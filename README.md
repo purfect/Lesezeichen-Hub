@@ -67,6 +67,31 @@ http://127.0.0.1:2222
 
 `go run .` nutzt standardmaessig Port `2222`. Die Windows-Klickstartskripte nutzen dagegen Port `3333`, sofern nichts anderes konfiguriert ist.
 
+## Formatierte Notizen
+
+Normale Notizen lassen sich direkt formatiert bearbeiten. Die kompakte Werkzeugleiste bietet Absatz- und Ueberschriftenformate, Fett/Kursiv, Aufzaehlungen, Nummerierung, Zitate, Links, Inline-Code und Codebloecke sowie Rueckgaengig/Wiederholen. Listen werden beim Schreiben automatisch fortgesetzt. Bestehende Notizen werden ebenfalls als Markdown dargestellt; bisherige `{code}`-Bloecke bleiben lesbar.
+
+Bestehende normale Notizen speichern Aenderungen automatisch. Beim Schliessen oder Wechseln wird der letzte Stand gespeichert; bei einem Speicherfehler bleibt der Editor offen. Neue Notizen werden mit **Erstellen** angelegt. Vault-Notizen bleiben beim manuellen, verschluesselten Speichern; ein Wechsel zu einem unverschluesselten Typ muss bestaetigt und ausdruecklich gespeichert werden. Checklisten, Code-Schnipsel und Anmerkungen behalten ihren bisherigen Bearbeitungsmodus.
+
+Suchbegriffe werden in der geoeffneten Notiz farbig hervorgehoben, auch innerhalb formatierter Absaetze. Das gilt ebenfalls beim Oeffnen aus der globalen Suche. Die Hervorhebung wird nicht gespeichert und verschwindet beim Leeren der Suche. Vault-Inhalte werden weiterhin nicht durchsucht. Treffer ausschliesslich in Markdown-Syntax oder unsichtbaren Linkzielen koennen ohne sichtbare Inhaltsmarkierung erscheinen.
+
+Gespeichert wird weiterhin Text im bisherigen `content`-Feld, kein HTML. Das blosse Anzeigen und Aenderungen nur an Metadaten schreiben den Inhalt nicht um; echte Textaenderungen im Richtext-Editor koennen die Markdown-Schreibweise normalisieren. **Kopieren** kopiert weiterhin den gespeicherten Rohtext/Markdown. HTML und Bilder werden nicht ausgefuehrt oder extern nachgeladen; Links erlauben HTTP(S) und beachten die Option fuer klickbare URLs. Tabellen und Bilder sind keine Richtext-Werkzeuge und werden als Code beziehungsweise Text erhalten.
+
+### Editor entwickeln und testen
+
+Alle Browserdateien einschliesslich Editor und Lizenzhinweisen sind lokal eingebettet. Fuer `go run .`, `go build` und Releases ist kein Node.js notwendig. Nur fuer Aenderungen am Editoradapter wird Node.js 24 oder neuer benoetigt:
+
+```bash
+npm ci
+npm test
+npm run build
+npx playwright install chromium
+npm run test:browser
+go test ./...
+```
+
+Unter Windows PowerShell bei gesperrten Skripten `npm.cmd` beziehungsweise `npx.cmd` verwenden. Der Asset-Build erzeugt das eingecheckte Browserbundle und die Lizenzhinweise aus dem Adapter unter `frontend/`. Nach Aenderungen an eingebetteten Dateien den Go-Server neu starten. Die Browsertests starten automatisch einen eigenen Server auf Port `18769` mit einer neuen Datenbank im temporaeren Verzeichnis und deaktivierten externen Preisabfragen; Screenshots entstehen unter `test-results/`.
+
 ## Lokale Module integrieren
 
 Unter **Module** wird automatisch der öffentliche Modulkatalog der GitHub-Organisation `Lesezeichen-Hub` angezeigt. Ein Klick auf **Herunterladen & einrichten** lädt das Repository, richtet dessen statische Weboberfläche ein und legt in der Gruppe **Module** ein Start-Lesezeichen an. Bereits vorhandene Module sind im Katalog grün umrandet und können dort per **Aktualisieren** erneut aus dem Repository geladen werden. Heruntergeladene Module liegen standardmäßig im Ordner `modules`; mit `MODULES_PATH` kann ein anderer Installationsordner gesetzt werden.

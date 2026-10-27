@@ -1615,7 +1615,8 @@ function renderNoteHits() {
   for (const note of notes) {
     const li = document.createElement("li");
     const link = document.createElement("a");
-    link.href = `/static/notes.html?note_id=${encodeURIComponent(note.id)}`;
+    const params = new URLSearchParams({ note_id: String(note.id), q: state.search });
+    link.href = `/static/notes.html?${params}`;
     link.textContent = `📝 ${note.title}`;
     li.appendChild(link);
     if (note.snippet) {

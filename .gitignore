@@ -12,3 +12,6 @@ RELEASE_NOTES*.md
 installer/stage/
 *.msi
 *.wixpdb
+node_modules/
+test-results/
+playwright-report/

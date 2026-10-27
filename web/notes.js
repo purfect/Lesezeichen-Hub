@@ -14,6 +14,26 @@ let pendingBookmarkIds = []; // set when arriving from main page via URL param
 const decryptedVaultCache = new Map();
 let editorAutosave = null;
 let editorAutosaveQueue = Promise.resolve();
+let richNoteEditor = null;
+
+function closeRichEditor() {
+  richNoteEditor?.destroy();
+  richNoteEditor = null;
+}
+
+function editorContent() {
+  return richNoteEditor ? richNoteEditor.getContent() : document.getElementById("editor-content").value;
+}
+
+function setEditorSaving(state, saving) {
+  if (state) state.manualSaving = saving;
+  const form = document.getElementById("note-editor-form");
+  if (form) {
+    form.inert = saving;
+    form.setAttribute("aria-busy", String(saving));
+  }
+  richNoteEditor?.editor.setEditable(!saving, false);
+}
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 const els = {
@@ -55,6 +75,12 @@ async function init() {
 
     // Open a linked note when arriving from a bookmark; otherwise create one.
     const params = new URLSearchParams(location.search);
+    const query = params.get("q") || "";
+    if (query.trim()) {
+      els.notesSearch.value = query;
+      updateSearchClearButton();
+      await runNoteSearch();
+    }
     const bmId    = Number(params.get("bookmark_id"));
     const bmTitle = params.get("bookmark_title") || "";
     const noteId  = Number(params.get("note_id"));
@@ -316,6 +342,17 @@ function renderFilteredList() {
   } else {
     renderList(notes);
   }
+  applySearchHighlights();
+}
+
+function applySearchHighlights() {
+  const query = searchResult?.query || "";
+  NoteEditor.highlightSearch(els.notesList, query);
+  if (isEditing) return;
+  NoteEditor.highlightSearch(els.detailHead, query);
+  if (allNotes.find(note => note.id === activeNoteId)?.type !== "vault") {
+    NoteEditor.highlightSearch(els.detailBody, query);
+  }
 }
 
 function renderTextNoteContent(content, linksClickable = false) {
@@ -425,7 +462,8 @@ async function saveChecklistToggle(note, newContent) {
 
 // ── Select / view a note ──────────────────────────────────────────────────
 async function selectNote(id) {
-  if (isEditing) await flushEditorAutosave();
+  if (isEditing && !await flushEditorAutosave()) return;
+  closeRichEditor();
   activeNoteId = id;
   isEditing = false;
   const note = allNotes.find(n => n.id === id);
@@ -459,7 +497,7 @@ function renderNoteView(note) {
   } else if (note.type === "code") {
     contentHtml = `<pre class="note-view-content is-code">${esc(note.content)}</pre>`;
   } else if (note.type === "note") {
-    contentHtml = renderTextNoteContent(note.content, note.links_clickable !== false);
+    contentHtml = `<div class="note-view-content note-markdown">${NoteEditor.renderMarkdown(note.content, note.links_clickable !== false)}</div>`;
   } else if (note.type === "checklist") {
     contentHtml = renderChecklistView(note);
   } else {
@@ -514,6 +552,7 @@ function renderNoteView(note) {
     : "";
 
   els.detailBody.innerHTML = metaHtml + vaultHtml + contentHtml + tagsHtml + bookmarksHtml;
+  applySearchHighlights();
 
   if (note.type === "vault") {
     const unlockBtn = document.getElementById("btn-vault-unlock");
@@ -556,6 +595,7 @@ function renderNoteView(note) {
 
 // ── Editor ────────────────────────────────────────────────────────────────
 function openEditor(note, prefillTitle = "") {
+  closeRichEditor();
   isEditing = true;
   if (editorAutosave?.timer) clearTimeout(editorAutosave.timer);
   editorAutosave = {
@@ -564,6 +604,7 @@ function openEditor(note, prefillTitle = "") {
     savedRevision: 0,
     failedRevision: null,
     manualSaving: false,
+    requiresManualSave: note?.type === "vault",
     timer: null,
   };
   els.detailHead.classList.add("hidden");
@@ -605,13 +646,14 @@ function openEditor(note, prefillTitle = "") {
           ${groupOptionsHtml}
         </select>
       </label>
-      <label>
-        Inhalt
+      <div class="note-editor-content-field">
+        <label for="editor-content">Inhalt</label>
         <span id="editor-content-hint" class="checklist-hint${type === "checklist" ? "" : " hidden"}">
           Zeile "# Abschnitt" für Überschriften, "- [ ] Schritt" für Aufgaben.
         </span>
         <textarea id="editor-content" class="${type === "code" ? "is-code" : ""}" placeholder="${type === "checklist" ? esc(checklistPlaceholder) : "Inhalt der Notiz…"}">${esc(content)}</textarea>
-      </label>
+        <div id="editor-rich-content"></div>
+      </div>
       <p id="editor-autosave-status" class="editor-autosave-status" aria-live="polite">${isNew ? "Automatisches Speichern ist nach dem Erstellen aktiv." : (type === "vault" ? "Vault-Notizen werden nicht automatisch gespeichert." : "Änderungen werden automatisch gespeichert.")}</p>
       <label id="editor-links-clickable-wrap" class="note-editor-checkbox${type === "code" || type === "vault" ? " hidden" : ""}">
         <input id="editor-links-clickable" type="checkbox" ${linksClickable ? "checked" : ""} />
@@ -646,7 +688,27 @@ function openEditor(note, prefillTitle = "") {
   const linksClickableWrap = document.getElementById("editor-links-clickable-wrap");
   const contentHint = document.getElementById("editor-content-hint");
   const addStepBtn  = document.getElementById("btn-add-step");
+  const richContainer = document.getElementById("editor-rich-content");
+  let previousType = type;
+  function syncEditorType() {
+    if (richNoteEditor) contentArea.value = richNoteEditor.getContent();
+    closeRichEditor();
+    const formatted = typeSelect.value === "note";
+    contentArea.hidden = formatted;
+    richContainer.hidden = !formatted;
+    if (formatted) richNoteEditor = NoteEditor.mountEditor(richContainer, contentArea.value, scheduleEditorAutosave);
+  }
+  syncEditorType();
+  document.querySelector('.note-editor-content-field > label').addEventListener('click', event => {
+    if (richNoteEditor) { event.preventDefault(); richNoteEditor.editor.commands.focus(); }
+  });
   typeSelect.addEventListener("change", () => {
+    if (previousType === "vault" && typeSelect.value !== "vault" && !confirm("Den entschlüsselten Inhalt als unverschlüsselte Notiz speichern? Die Änderung wird erst mit Speichern übernommen.")) {
+      typeSelect.value = previousType;
+      return;
+    }
+    previousType = typeSelect.value;
+    syncEditorType();
     contentArea.classList.toggle("is-code", typeSelect.value === "code");
     vaultWrap.classList.toggle("hidden", typeSelect.value !== "vault");
     linksClickableWrap.classList.toggle("hidden", typeSelect.value === "code" || typeSelect.value === "vault");
@@ -669,7 +731,8 @@ function openEditor(note, prefillTitle = "") {
   });
 
   document.getElementById("btn-cancel-edit").addEventListener("click", async () => {
-    await flushEditorAutosave();
+    if (!await flushEditorAutosave()) return;
+    closeRichEditor();
     isEditing = false;
     pendingBookmarkIds = [];
     if (activeNoteId) {
@@ -695,9 +758,9 @@ function scheduleEditorAutosave() {
   if (state.timer) clearTimeout(state.timer);
 
   const type = document.getElementById("editor-type")?.value;
-  if (type === "vault") {
+  if (type === "vault" || state.requiresManualSave) {
     state.revision++;
-    setAutosaveStatus("Vault-Notizen werden nicht automatisch gespeichert.");
+    setAutosaveStatus("Diese Änderungen bitte mit Speichern übernehmen.");
     return;
   }
 
@@ -714,13 +777,13 @@ function queueEditorAutosave(state, revision) {
     .then(async () => {
       if (state !== editorAutosave || !isEditing || revision !== state.revision) return;
       const type = document.getElementById("editor-type")?.value;
-      if (type === "vault") return;
+      if (type === "vault" || state.requiresManualSave || state.manualSaving) return;
 
       const groupRaw = document.getElementById("editor-group").value;
       const tags = document.getElementById("editor-tags").value.split(",").map(tag => tag.trim()).filter(Boolean);
       const body = {
         title: document.getElementById("editor-title").value.trim(),
-        content: document.getElementById("editor-content").value,
+        content: editorContent(),
         type,
         group_id: groupRaw === "" ? null : Number(groupRaw),
         tags,
@@ -757,24 +820,30 @@ function queueEditorAutosave(state, revision) {
 
 async function flushEditorAutosave() {
   const state = editorAutosave;
-  if (!state?.noteId) return;
+  if (!isEditing) return true;
+  if (state?.manualSaving) return false;
+  if (!state?.noteId) return true;
+  if (state.requiresManualSave || document.getElementById("editor-type")?.value === "vault") {
+    return state.revision <= state.savedRevision || confirm("Nicht gespeicherte Änderungen verwerfen?");
+  }
   while (state === editorAutosave && state.revision > state.savedRevision) {
     if (state.timer) clearTimeout(state.timer);
     state.timer = null;
     const revision = state.revision;
     if (document.getElementById("editor-type")?.value !== "vault") {
       await queueEditorAutosave(state, revision);
-      if (state.failedRevision === revision) break;
+      if (state.failedRevision === revision) return false;
     } else {
       break;
     }
   }
+  return true;
 }
 
 async function saveNote(existingId, existingBookmarkIds) {
   const autosaveState = editorAutosave;
   if (autosaveState) {
-    autosaveState.manualSaving = true;
+    setEditorSaving(autosaveState, true);
     if (autosaveState.timer) {
       clearTimeout(autosaveState.timer);
       autosaveState.timer = null;
@@ -786,7 +855,7 @@ async function saveNote(existingId, existingBookmarkIds) {
   const type    = document.getElementById("editor-type").value;
   const groupRaw = document.getElementById("editor-group").value;
   const groupId  = groupRaw === "" ? null : Number(groupRaw);
-  let content   = document.getElementById("editor-content").value;
+  let content   = editorContent();
   const tagsRaw = document.getElementById("editor-tags").value;
   const tags    = tagsRaw.split(",").map(t => t.trim()).filter(Boolean);
   const linksClickable = document.getElementById("editor-links-clickable").checked;
@@ -795,12 +864,14 @@ async function saveNote(existingId, existingBookmarkIds) {
   if (type === "vault") {
     const password = document.getElementById("editor-vault-password")?.value || "";
     if (!password) {
+      setEditorSaving(autosaveState, false);
       setStatus("Fuer Vault-Notizen ist ein Passwort erforderlich.", true);
       return;
     }
     try {
       content = await encryptVaultContent(content, password);
     } catch {
+      setEditorSaving(autosaveState, false);
       setStatus("Vault-Inhalt konnte nicht verschlüsselt werden.", true);
       return;
     }
@@ -821,12 +892,13 @@ async function saveNote(existingId, existingBookmarkIds) {
     }
     pendingBookmarkIds = [];
     await reloadNotes();
+    closeRichEditor();
     isEditing = false;
     if (activeNoteId) selectNote(activeNoteId);
     setStatus("Gespeichert.");
     setTimeout(() => setStatus(""), 2000);
   } catch (err) {
-    if (autosaveState && autosaveState === editorAutosave) autosaveState.manualSaving = false;
+    if (autosaveState && autosaveState === editorAutosave) setEditorSaving(autosaveState, false);
     setStatus(err.message || "Fehler beim Speichern.", true);
   }
 }
@@ -851,6 +923,7 @@ async function deleteNote(id) {
 }
 
 function resetDetail() {
+  closeRichEditor();
   els.detailHead.classList.add("hidden");
   els.detailBody.innerHTML = `
     <div class="notes-placeholder">
@@ -862,7 +935,7 @@ function resetDetail() {
 
 // ── Event wiring ──────────────────────────────────────────────────────────
 els.btnNewNote.addEventListener("click", async () => {
-  await flushEditorAutosave();
+  if (!await flushEditorAutosave()) return;
   activeNoteId = null;
   pendingBookmarkIds = [];
   document.querySelectorAll(".note-item").forEach(el => el.classList.remove("active"));
@@ -1006,6 +1079,7 @@ els.btnNewGroup.addEventListener("click", () => {
 });
 
 els.notesSearchClear.addEventListener("click", () => {
+  clearTimeout(searchDebounce);
   els.notesSearch.value = "";
   searchResult = null;
   renderFilteredList();
