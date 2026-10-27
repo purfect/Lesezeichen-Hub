@@ -248,6 +248,9 @@ for (const type of ['note', 'annotation', 'code', 'checklist']) {
     await page.locator('#btn-edit').click();
     const rich = page.getByRole('textbox', { name: 'Inhalt der Notiz' });
     await expect(page.locator('.note-format-toolbar')).toBeVisible();
+    await expect(page.locator('#editor-type option[value="checklist"]')).toHaveCount(0);
+    await expect(page.locator('#editor-type')).toHaveValue(type === 'checklist' ? 'note' : type);
+    await expect(page.locator('#btn-add-step, #checklist-add-form')).toHaveCount(0);
     await expect(rich.locator('li[data-type="taskItem"]')).toHaveCount(2);
     await expect(rich.locator('input:checked')).toHaveCount(1);
     await page.locator('#editor-tags').fill('Metadaten');
@@ -265,13 +268,19 @@ for (const type of ['note', 'annotation', 'code', 'checklist']) {
     expect(saved).toContain('- [x] Fertig');
     expect(saved).toContain('- [ ] Offen');
     expect(saved).toContain('### Weiter');
-    if (type === 'checklist') {
+    {
       await expect(page.locator('.checklist-progress-label')).toContainText('1 von 2');
       await page.locator('.checklist-item input').nth(1).check();
       await expect(page.locator('.checklist-progress-label')).toContainText('2 von 2');
       await expect.poll(() => savedContent(request, id)).toContain('- [x] Offen');
       await page.locator('#btn-edit').click();
-      await page.locator('#btn-add-step').click();
+      await rich.locator('h3').click();
+      await expect.poll(() => rich.evaluate(() => window.getSelection()?.anchorNode?.textContent)).toBe('Weiter');
+      await rich.press('End');
+      await rich.press('Enter');
+      await expect.poll(() => rich.evaluate(() => window.getSelection()?.anchorNode?.textContent)).toBe('');
+      await page.getByRole('button', { name: 'Aufgabenliste', exact: true }).click();
+      await expect(rich).toBeFocused();
       await page.getByRole('textbox', { name: 'Inhalt der Notiz' }).pressSequentially('Neuer Schritt');
       await page.locator('#btn-cancel-edit').click();
       await expect(page.locator('.checklist-progress-label')).toContainText('2 von 3');
