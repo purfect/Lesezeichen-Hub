@@ -337,6 +337,53 @@ test('Workflow counts and toggles only actual tasks, not code samples', async ({
 });
 
 for (const theme of ['modern', 'terminal']) {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 780 }]) {
+    test(`Long note scroll ${theme} ${viewport.width}px`, async ({ page, request }, testInfo) => {
+      await page.setViewportSize(viewport);
+      await page.addInitScript(value => localStorage.setItem('lsz_theme', value), theme);
+      const source = Array.from({ length: 120 }, (_value, index) => `Absatz ${index}: Eine lange Notiz mit mehreren Textstellen und einem Zielwort`).join('\n\n');
+      const id = await createNote(request, source);
+      await page.goto(`/static/notes.html?note_id=${id}`);
+      await page.locator('#btn-edit').click();
+      const rich = page.getByRole('textbox', { name: 'Inhalt der Notiz' });
+      const frame = page.locator('.note-rich-editor');
+      const toolbar = page.locator('.note-format-toolbar');
+      await frame.evaluate(element => element.scrollIntoView({ block: 'center' }));
+      const metrics = await rich.evaluate(element => ({ height: element.clientHeight, contentHeight: element.scrollHeight }));
+      expect(metrics.height).toBeLessThanOrEqual(viewport.height * 0.55 + 1);
+      expect(metrics.contentHeight).toBeGreaterThan(metrics.height * 3);
+      await expect(toolbar).toBeInViewport({ ratio: 1 });
+      const last = rich.locator('p').last();
+      await rich.focus();
+      await last.click();
+      await expect.poll(() => rich.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+      await last.evaluate(element => {
+        const text = element.firstChild;
+        const range = document.createRange();
+        range.setStart(text, text.textContent.length - 'Zielwort'.length);
+        range.setEnd(text, text.textContent.length);
+        const selection = getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        document.dispatchEvent(new Event('selectionchange'));
+      });
+      await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe('Zielwort');
+      await expect.poll(() => page.evaluate(() => {
+        const { state } = richNoteEditor.editor;
+        return state.doc.textBetween(state.selection.from, state.selection.to);
+      })).toBe('Zielwort');
+      const toolbarBefore = await toolbar.boundingBox();
+      const scrollBefore = await rich.evaluate(element => element.scrollTop);
+      await page.getByRole('button', { name: 'Fett', exact: true }).click();
+      await expect(last.locator('strong')).toHaveText('Zielwort');
+      await expect(toolbar).toBeInViewport({ ratio: 1 });
+      const toolbarAfter = await toolbar.boundingBox();
+      expect(Math.abs(toolbarAfter.y - toolbarBefore.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(await rich.evaluate(element => element.scrollTop) - scrollBefore)).toBeLessThanOrEqual(2);
+      await page.screenshot({ path: testInfo.outputPath('bounded-note-editor.png'), fullPage: true });
+      await expect.poll(() => savedContent(request, id)).toContain('**Zielwort**');
+    });
+  }
   for (const width of [1440, 390, 360]) {
     test(`Layout ${theme} ${width}px`, async ({ page, request }, testInfo) => {
       await page.setViewportSize({ width, height: 1000 });
