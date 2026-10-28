@@ -11,6 +11,27 @@ async function savedContent(request, id) {
   return (await response.json()).content;
 }
 
+test('Downloads a selected note as Markdown and all notes as JSON', async ({ page, request }) => {
+  const content = '# Überschrift\n\n- [ ] Aufgabe';
+  const id = await createNote(request, content, { title: 'Plan: Oktober?' });
+  await page.goto(`/static/notes.html?note_id=${id}`);
+  page.on('dialog', dialog => dialog.accept('mein-plan.custom'));
+
+  const singleDownload = page.waitForEvent('download');
+  await page.locator('#btn-export-note').click();
+  const markdown = await singleDownload;
+  expect(markdown.suggestedFilename()).toBe('mein-plan.custom');
+  expect(await (await import('node:fs/promises')).readFile(await markdown.path(), 'utf8')).toBe(content);
+
+  const allDownload = page.waitForEvent('download');
+  await page.locator('#btn-export-notes').click();
+  const json = await allDownload;
+  expect(json.suggestedFilename()).toMatch(/^notizen-\d{4}-\d{2}-\d{2}\.json$/);
+  const exported = JSON.parse(await (await import('node:fs/promises')).readFile(await json.path(), 'utf8'));
+  expect(exported.notes.find(note => note.id === id).content).toBe(content);
+  expect(exported).toHaveProperty('note_groups');
+});
+
 test('Toolbar, selection, autosave, undo and type switching preserve the note', async ({ page, request }) => {
   const id = await createNote(request, 'Text für heute');
   const errors = [];
@@ -213,7 +234,8 @@ test('Cleared search ignores a late response and checklist controls remain inter
 });
 
 test('Vault conversion never autosaves plaintext and requires explicit saving', async ({ page, request }) => {
-  page.on('dialog', dialog => dialog.accept(dialog.type() === 'prompt' ? 'Nur-ein-Testpasswort' : undefined));
+  let promptAnswer = 'Nur-ein-Testpasswort';
+  page.on('dialog', dialog => dialog.accept(dialog.type() === 'prompt' ? promptAnswer : undefined));
   await page.goto('/static/notes.html?new=1');
   await page.locator('#editor-title').fill('Geschützter Entwurf');
   await page.locator('#editor-type').selectOption('vault');
@@ -225,6 +247,18 @@ test('Vault conversion never autosaves plaintext and requires explicit saving', 
   const note = notes.notes.find(note => note.title === 'Geschützter Entwurf');
   expect(note.type).toBe('vault');
   expect(note.content).not.toContain('Vertraulicher Inhalt');
+  await page.goto(`/static/notes.html?note_id=${note.id}`);
+  await page.locator('#btn-export-note').click();
+  await expect(page.locator('#status')).toContainText('zuerst entsperren');
+  await page.locator('#vault-password').fill('Nur-ein-Testpasswort');
+  await page.locator('#btn-vault-unlock').click();
+  promptAnswer = 'id_rsa';
+  const vaultDownload = page.waitForEvent('download');
+  await page.locator('#btn-export-note').click();
+  const plainFile = await vaultDownload;
+  expect(plainFile.suggestedFilename()).toBe('id_rsa');
+  expect(await (await import('node:fs/promises')).readFile(await plainFile.path(), 'utf8')).toBe('Vertraulicher Inhalt');
+  promptAnswer = 'Nur-ein-Testpasswort';
   await page.locator('#btn-edit').click();
   await page.locator('#editor-type').selectOption('note');
   await expect(page.getByRole('textbox', { name: 'Inhalt der Notiz' })).toHaveText('Vertraulicher Inhalt');
@@ -233,6 +267,31 @@ test('Vault conversion never autosaves plaintext and requires explicit saving', 
   await page.getByRole('button', { name: 'Speichern', exact: true }).click();
   await expect(page.locator('.note-markdown')).toHaveText('Vertraulicher Inhalt');
   expect(await savedContent(request, note.id)).toBe('Vertraulicher Inhalt');
+});
+
+test('Unlocked vault exports a multiline key with the chosen filename', async ({ page, request }) => {
+  const key = '-----BEGIN OPENSSH PRIVATE KEY-----\nYWJjZGVm\n-----END OPENSSH PRIVATE KEY-----\n';
+  page.on('dialog', dialog => dialog.accept('id_ed25519'));
+  await page.goto('/static/notes.html?new=1');
+  await page.locator('#editor-title').fill('SSH-Schlüssel');
+  await page.locator('#editor-type').selectOption('vault');
+  await page.locator('#editor-raw-mode').check();
+  await page.locator('#editor-content').fill(key);
+  await page.locator('#editor-vault-password').fill('Testpasswort');
+  await page.getByRole('button', { name: 'Erstellen', exact: true }).click();
+  await expect(page.locator('#btn-export-note')).toBeVisible();
+  const notes = await (await request.get('/api/notes')).json();
+  const saved = notes.notes.find(note => note.title === 'SSH-Schlüssel');
+  expect(saved.content).not.toContain(key);
+  await page.goto(`/static/notes.html?note_id=${saved.id}`);
+  await page.locator('#vault-password').fill('Testpasswort');
+  await page.locator('#btn-vault-unlock').click();
+  const downloadEvent = page.waitForEvent('download');
+  await page.locator('#btn-export-note').click();
+  const download = await downloadEvent;
+  expect(download.suggestedFilename()).toBe('id_ed25519');
+  const exportedKey = await (await import('node:fs/promises')).readFile(await download.path(), 'utf8');
+  expect(exportedKey).toBe(key);
 });
 
 for (const type of ['note', 'annotation', 'code', 'checklist']) {

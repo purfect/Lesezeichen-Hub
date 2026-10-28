@@ -22,6 +22,7 @@ function closeRichEditor() {
 }
 
 function editorContent() {
+  if (document.getElementById("editor-raw-mode")?.checked) return document.getElementById("editor-content").value;
   return richNoteEditor ? richNoteEditor.getContent() : document.getElementById("editor-content").value;
 }
 
@@ -47,6 +48,8 @@ const els = {
   detailHead:      document.getElementById("detail-head"),
   detailTitleLabel:document.getElementById("detail-title-label"),
   btnCopy:         document.getElementById("btn-copy"),
+  btnExportNote:   document.getElementById("btn-export-note"),
+  btnExportNotes:  document.getElementById("btn-export-notes"),
   btnBookmark:     document.getElementById("btn-bookmark"),
   btnEdit:         document.getElementById("btn-edit"),
   btnDelete:       document.getElementById("btn-delete"),
@@ -449,6 +452,7 @@ async function selectNote(id) {
 function renderNoteView(note) {
   els.detailHead.classList.remove("hidden");
   els.detailTitleLabel.textContent = note.title;
+  els.btnExportNote.textContent = "Als Datei exportieren";
   els.btnBookmark.textContent = findNoteBookmark(note.id) ? "Lesezeichen ✓" : "Als Lesezeichen";
 
   const bookmarkIdSet = new Set(allBookmarks.map(b => b.id));
@@ -606,6 +610,10 @@ function openEditor(note, prefillTitle = "") {
         <textarea id="editor-content" hidden>${esc(content)}</textarea>
         <div id="editor-rich-content"></div>
       </div>
+      <label class="note-editor-checkbox">
+        <input id="editor-raw-mode" type="checkbox" />
+        Rohtext bearbeiten (Zeilenumbrüche exakt beibehalten)
+      </label>
       <p id="editor-autosave-status" class="editor-autosave-status" aria-live="polite">${isNew ? "Automatisches Speichern ist nach dem Erstellen aktiv." : (type === "vault" ? "Vault-Notizen werden nicht automatisch gespeichert." : "Änderungen werden automatisch gespeichert.")}</p>
       <label id="editor-links-clickable-wrap" class="note-editor-checkbox">
         <input id="editor-links-clickable" type="checkbox" ${linksClickable ? "checked" : ""} />
@@ -640,6 +648,22 @@ function openEditor(note, prefillTitle = "") {
   richNoteEditor = NoteEditor.mountEditor(richContainer, content, scheduleEditorAutosave);
   document.querySelector('.note-editor-content-field > label').addEventListener('click', event => {
     if (richNoteEditor) { event.preventDefault(); richNoteEditor.editor.commands.focus(); }
+  });
+  const rawMode = document.getElementById("editor-raw-mode");
+  const rawContent = document.getElementById("editor-content");
+  rawMode.addEventListener("change", () => {
+    if (rawMode.checked) {
+      rawContent.value = richNoteEditor.getContent();
+      closeRichEditor();
+      richContainer.replaceChildren();
+      richContainer.hidden = true;
+      rawContent.hidden = false;
+      rawContent.focus();
+    } else {
+      rawContent.hidden = true;
+      richContainer.hidden = false;
+      richNoteEditor = NoteEditor.mountEditor(richContainer, rawContent.value, scheduleEditorAutosave);
+    }
   });
   typeSelect.addEventListener("change", () => {
     if (previousType === "vault" && typeSelect.value !== "vault" && !confirm("Den entschlüsselten Inhalt als unverschlüsselte Notiz speichern? Die Änderung wird erst mit Speichern übernommen.")) {
@@ -976,6 +1000,70 @@ els.btnCopy.addEventListener("click", async () => {
     setTimeout(() => setStatus(""), 1600);
   } catch {
     setStatus("Kopieren fehlgeschlagen.", true);
+  }
+});
+
+function downloadNoteFile(content, filename, type) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function noteFileName(title, id, extension) {
+  const safeTitle = String(title || "").replace(/[<>:"/\\|?*\x00-\x1f]/g, "-").replace(/[. ]+$/g, "").trim().slice(0, 80) || "Notiz";
+  return `${safeTitle}-${id}.${extension}`;
+}
+
+els.btnExportNote.addEventListener("click", async () => {
+  const id = activeNoteId;
+  if (!id) return;
+  try {
+    const note = await request(`/api/notes/${id}`);
+    const content = note.type === "vault" ? decryptedVaultCache.get(id) : note.content;
+    if (content === undefined) {
+      setStatus("Vault zuerst entsperren, dann exportieren.", true);
+      return;
+    }
+    const suggestedName = noteFileName(note.title, id, note.type === "vault" ? "txt" : "md");
+    const filename = prompt("Dateiname mit gewünschter Endung:", suggestedName);
+    if (filename === null) return;
+    if (!filename.trim() || filename !== filename.trim() || /[<>:"/\\|?*\x00-\x1f]/.test(filename) || /[. ]$/.test(filename) || filename === "." || filename === "..") {
+      setStatus("Bitte einen gültigen Dateinamen eingeben.", true);
+      return;
+    }
+    downloadNoteFile(content || "", filename, "application/octet-stream");
+    setStatus("Notiz exportiert.");
+  } catch (err) {
+    setStatus(err.message || "Export fehlgeschlagen.", true);
+  }
+});
+
+els.btnExportNotes.addEventListener("click", async () => {
+  try {
+    const [{ notes }, { note_groups }, { modules }, { groups }] = await Promise.all([
+      request("/api/notes"),
+      request("/api/note-groups"),
+      request("/api/modules"),
+      request("/api/state"),
+    ]);
+    const moduleURLs = new Set(modules.map(module => module.url));
+    const moduleBookmarkIDs = new Set(groups.flatMap(group => group.bookmarks || [])
+      .filter(bookmark => moduleURLs.has(bookmark.url)).map(bookmark => bookmark.id));
+    const exportNotes = notes.map(note => ({
+      ...note,
+      bookmark_ids: (note.bookmark_ids || []).filter(id => !moduleBookmarkIDs.has(id)),
+    }));
+    const data = { version: 1, exported_at: new Date().toISOString(), note_groups, notes: exportNotes };
+    const date = new Date().toLocaleDateString("sv-SE");
+    downloadNoteFile(JSON.stringify(data, null, 2) + "\n", `notizen-${date}.json`, "application/json;charset=utf-8");
+    setStatus(`${notes.length} Notizen exportiert.`);
+  } catch (err) {
+    setStatus(err.message || "Export fehlgeschlagen.", true);
   }
 });
 

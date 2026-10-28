@@ -44,6 +44,11 @@ func (app *application) handleExport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	groups, _, err = app.withoutInstalledModules(r.Context(), groups)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	if groupID > 0 {
 		groups = filterGroupsByID(groups, groupID)
@@ -317,6 +322,10 @@ func (app *application) buildBackupPayload(ctx context.Context) (backupPayload, 
 	if err != nil {
 		return backupPayload{}, err
 	}
+	groups, excludedBookmarkIDs, err := app.withoutInstalledModules(ctx, groups)
+	if err != nil {
+		return backupPayload{}, err
+	}
 
 	bkGroups := make([]backupGroup, 0, len(groups))
 	for _, g := range groups {
@@ -363,6 +372,13 @@ func (app *application) buildBackupPayload(ctx context.Context) (backupPayload, 
 			n.Content = ""
 		}
 		n.BookmarkIDs = parseBookmarkIDs(bmRaw)
+		filteredIDs := n.BookmarkIDs[:0]
+		for _, id := range n.BookmarkIDs {
+			if !excludedBookmarkIDs[id] {
+				filteredIDs = append(filteredIDs, id)
+			}
+		}
+		n.BookmarkIDs = filteredIDs
 		n.Tags = parseTags(tagsRaw)
 		n.LinksClickable = &linksClickable
 		bkNotes = append(bkNotes, n)
@@ -377,6 +393,49 @@ func (app *application) buildBackupPayload(ctx context.Context) (backupPayload, 
 		Groups:     bkGroups,
 		Notes:      bkNotes,
 	}, nil
+}
+
+// withoutInstalledModules removes only bookmarks belonging to registered modules.
+// Their numeric URLs are local installation IDs and cannot be restored reliably.
+func (app *application) withoutInstalledModules(ctx context.Context, groups []group) ([]group, map[int64]bool, error) {
+	rows, err := app.db.QueryContext(ctx, `SELECT id FROM modules`)
+	if err != nil {
+		return nil, nil, err
+	}
+	moduleURLs := make(map[string]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		moduleURLs[fmt.Sprintf("/modules/%d/index.html", id)] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, err
+	}
+	rows.Close()
+
+	excluded := make(map[int64]bool)
+	filtered := make([]group, 0, len(groups))
+	for _, g := range groups {
+		originalCount := len(g.Bookmarks)
+		bookmarks := make([]bookmark, 0, originalCount)
+		for _, b := range g.Bookmarks {
+			if moduleURLs[b.URL] {
+				excluded[b.ID] = true
+				continue
+			}
+			bookmarks = append(bookmarks, b)
+		}
+		if g.Name == "Module" && originalCount > 0 && len(bookmarks) == 0 {
+			continue
+		}
+		g.Bookmarks = bookmarks
+		filtered = append(filtered, g)
+	}
+	return filtered, excluded, nil
 }
 
 func (app *application) handleRestore(w http.ResponseWriter, r *http.Request) {
