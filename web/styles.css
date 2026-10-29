@@ -624,7 +624,7 @@ h1 {
   padding: 1px 4px 4px 1px;
 }
 
-.favorite-pill {
+:is(.favorite-pill, .quick-note-pill) {
   display: block;
   min-width: 0;
   width: 100%;
@@ -643,13 +643,24 @@ h1 {
   cursor: grab;
 }
 
-.favorite-pill:hover {
+:is(.favorite-pill, .quick-note-pill):hover {
   background: rgba(27, 62, 94, 0.9);
 }
 
-.favorite-pill:focus-visible {
+:is(.favorite-pill, .quick-note-pill):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.quick-note-pill {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  cursor: pointer;
+}
+
+.quick-note-pill:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .favorite-pill.dragging {

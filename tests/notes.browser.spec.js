@@ -11,6 +11,15 @@ async function savedContent(request, id) {
   return (await response.json()).content;
 }
 
+test('Quick note opens directly in edit mode from the favorites quickbar', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Schnellnotiz' }).click();
+  const editor = page.getByRole('textbox', { name: 'Inhalt der Notiz' });
+  await expect(editor).toBeVisible();
+  await editor.fill('Direkt erfasst');
+  await expect(editor).toHaveText('Direkt erfasst');
+});
+
 test('Downloads a selected note as Markdown and all notes as JSON', async ({ page, request }) => {
   const content = '# Überschrift\n\n- [ ] Aufgabe';
   const id = await createNote(request, content, { title: 'Plan: Oktober?' });
@@ -61,6 +70,26 @@ test('Toolbar, selection, autosave, undo and type switching preserve the note', 
   await expect(page.locator('.note-markdown h2')).toHaveText('Mein Ablauf');
   await expect.poll(() => savedContent(request, id)).toContain('## **Mein Ablauf**');
   expect(errors).toEqual([]);
+});
+
+test('Copies the selected note code block to the clipboard', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    window.copiedCode = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async text => { window.copiedCode = text; } },
+    });
+  });
+  const content = '```js\nconst first = true;\n```\n\n```js\nconst second = true;\n```';
+  const id = await createNote(request, content);
+  await page.goto(`/static/notes.html?note_id=${id}`);
+  const blocks = page.locator('.note-markdown pre');
+  const copyButtons = page.getByRole('button', { name: 'Code kopieren' });
+  await expect(blocks).toHaveCount(2);
+  await expect(copyButtons).toHaveCount(2);
+  await copyButtons.nth(1).click();
+  await expect.poll(() => page.evaluate(() => window.copiedCode)).toBe('const second = true;\n');
+  await expect(page.getByRole('button', { name: 'Code kopiert' })).toHaveCount(1);
 });
 
 test('Search highlights formatted text and clears without saving markup', async ({ page, request }) => {

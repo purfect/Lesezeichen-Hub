@@ -522,6 +522,7 @@ function renderNoteView(note) {
 
   els.detailBody.innerHTML = metaHtml + vaultHtml + contentHtml + tagsHtml + bookmarksHtml;
   applySearchHighlights();
+  NoteEditor.addCodeCopyButtons(els.detailBody);
 
   if (note.type === "vault") {
     const unlockBtn = document.getElementById("btn-vault-unlock");

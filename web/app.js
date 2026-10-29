@@ -1283,12 +1283,15 @@ function renderFavoritesQuickbar() {
   const orderedFavorites = sortFavoritesQuickbar(favorites);
 
   els.favoritesQuickbar.innerHTML = "";
-  if (orderedFavorites.length === 0) {
-    els.favoritesSegment.classList.add("hidden");
-    return;
-  }
-
   els.favoritesSegment.classList.remove("hidden");
+  const quickNote = document.createElement("a");
+  quickNote.className = "quick-note-pill";
+  quickNote.href = "/static/notes.html?new=1";
+  quickNote.title = "Schnellnotiz";
+  quickNote.setAttribute("aria-label", "Schnellnotiz");
+  quickNote.textContent = "Schnellnotiz";
+  els.favoritesQuickbar.appendChild(quickNote);
+
   for (const bookmark of orderedFavorites) {
     const link = document.createElement("a");
     link.className = "favorite-pill";

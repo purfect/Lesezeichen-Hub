@@ -4,7 +4,7 @@ import { Markdown } from '@tiptap/markdown';
 import { TaskList, TaskItem } from '@tiptap/extension-list';
 import DOMPurify from 'dompurify';
 import { Marked } from 'marked';
-import { createElement as createIcon, Bold, Italic, List, ListOrdered, ListChecks, Quote, Link, Code, SquareCode, Undo2, Redo2, X, Check } from 'lucide';
+import { createElement as createIcon, Bold, Italic, List, ListOrdered, ListChecks, Quote, Link, Code, SquareCode, Copy, Undo2, Redo2, X, Check } from 'lucide';
 
 const escapeText = text => String(text).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const safeURL = value => {
@@ -285,4 +285,46 @@ export function highlightSearch(root, query) {
   }
 }
 
-window.NoteEditor = { mountEditor, renderMarkdown, highlightSearch };
+export function addCodeCopyButtons(root) {
+  for (const pre of root.querySelectorAll('.note-markdown pre')) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'note-code-block';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'note-code-copy';
+    button.title = 'Code kopieren';
+    button.setAttribute('aria-label', 'Code kopieren');
+    button.append(createIcon(Copy, { width: 18, height: 18, 'aria-hidden': 'true' }));
+    let resetTimer;
+    button.addEventListener('click', async () => {
+      const code = pre.querySelector('code')?.textContent ?? pre.textContent ?? '';
+      try {
+        await navigator.clipboard.writeText(code);
+      } catch {
+        const textarea = document.createElement('textarea');
+        textarea.value = code;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.append(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        if (!copied) return;
+      }
+      clearTimeout(resetTimer);
+      button.replaceChildren(createIcon(Check, { width: 18, height: 18, 'aria-hidden': 'true' }));
+      button.title = 'Code kopiert';
+      button.setAttribute('aria-label', 'Code kopiert');
+      resetTimer = setTimeout(() => {
+        if (!button.isConnected) return;
+        button.replaceChildren(createIcon(Copy, { width: 18, height: 18, 'aria-hidden': 'true' }));
+        button.title = 'Code kopieren';
+        button.setAttribute('aria-label', 'Code kopieren');
+      }, 1500);
+    });
+    pre.replaceWith(wrapper);
+    wrapper.append(pre, button);
+  }
+}
+
+window.NoteEditor = { mountEditor, renderMarkdown, highlightSearch, addCodeCopyButtons };
