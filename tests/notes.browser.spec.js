@@ -40,6 +40,7 @@ test('Toolbar, selection, autosave, undo and type switching preserve the note', 
   await page.locator('#btn-edit').click();
   const rich = page.getByRole('textbox', { name: 'Inhalt der Notiz' });
   await rich.fill('Mein Ablauf');
+  await expect(rich.locator('p')).toHaveCSS('margin-bottom', '0px');
   await rich.press('ControlOrMeta+a');
   await page.getByRole('button', { name: 'Fett', exact: true }).click();
   await expect(rich.locator('strong')).toHaveText('Mein Ablauf');
