@@ -37,6 +37,7 @@ test('Toolbar, selection, autosave, undo and type switching preserve the note', 
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`/static/notes.html?note_id=${id}`);
+  await expect(page.locator('.note-markdown p')).toHaveCSS('margin-bottom', '0px');
   await page.locator('#btn-edit').click();
   const rich = page.getByRole('textbox', { name: 'Inhalt der Notiz' });
   await rich.fill('Mein Ablauf');
