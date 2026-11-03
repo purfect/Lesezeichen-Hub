@@ -52,6 +52,8 @@ test('Imports text files as editable notes and keeps their blank lines after sav
     if (name === 'abstand.txt') {
       const chooser = page.waitForEvent('filechooser');
       await page.locator('#btn-import-note').click();
+      await expect(page.locator('#note-import-panel')).toBeVisible();
+      await page.getByRole('button', { name: 'Lokale Datei' }).click();
       await (await chooser).setFiles(selectedFile);
     } else {
       await page.locator('#note-import-file').setInputFiles(selectedFile);
@@ -74,6 +76,52 @@ test('Imports text files as editable notes and keeps their blank lines after sav
       await expect(page.locator('.note-markdown .note-blank-line')).toHaveCount(4);
     }
   }
+});
+
+test('Imports a GitHub text URL and saves the exact text as a note', async ({ page, request }) => {
+  const sourceURL = 'https://github.com/example/project/blob/main/docs/config.md';
+  const content = '# Konfiguration\n\n\nwert = true\n';
+  await page.route('**/api/notes/import-url', async route => {
+    expect(route.request().postDataJSON()).toEqual({ url: sourceURL });
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ title: 'config', content, source_url: 'https://raw.githubusercontent.com/example/project/main/docs/config.md' }),
+    });
+  });
+  await page.goto('/static/notes.html');
+  await page.locator('#btn-import-note').click();
+  await expect(page.locator('#note-import-panel')).toBeVisible();
+  await page.getByRole('button', { name: 'Per URL' }).click();
+  await page.getByRole('textbox', { name: 'URL einer Textdatei' }).fill(sourceURL);
+  await page.getByRole('button', { name: 'Laden', exact: true }).click();
+  await expect(page.locator('#detail-title-label')).toHaveText('config');
+  await expect(page.locator('#note-import-panel')).toBeHidden();
+  await expect(page.locator('.note-markdown .note-blank-line')).toHaveCount(2);
+  const response = await (await request.get('/api/notes')).json();
+  const saved = response.notes.find(note => note.title === 'config');
+  expect(saved.content).toBe(content);
+  await page.locator('#btn-edit').click();
+  await page.locator('#editor-raw-mode').check();
+  await expect(page.locator('#editor-content')).toHaveValue(content);
+});
+
+test('A failed URL download does not create a note', async ({ page, request }) => {
+  await page.route('**/api/notes/import-url', route => route.fulfill({
+    status: 502,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'Quelle antwortet mit HTTP 404' }),
+  }));
+  await page.goto('/static/notes.html');
+  const before = await (await request.get('/api/notes')).json();
+  await page.locator('#btn-import-note').click();
+  await page.getByRole('button', { name: 'Per URL' }).click();
+  await page.getByRole('textbox', { name: 'URL einer Textdatei' }).fill('https://example.com/missing.md');
+  await page.getByRole('button', { name: 'Laden', exact: true }).click();
+  await expect(page.locator('#status')).toContainText('HTTP 404');
+  await expect(page.locator('#note-import-panel')).toBeVisible();
+  const response = await (await request.get('/api/notes')).json();
+  expect(response.notes).toHaveLength(before.notes.length);
 });
 
 test('Rich editing shows saved blank lines and keeps them after an edit', async ({ page, request }) => {

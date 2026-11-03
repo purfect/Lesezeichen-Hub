@@ -103,6 +103,89 @@
       background: rgba(44, 183, 161, 0.1);
     }
 
+    .note-import-panel {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(17, 29, 45, 0.96);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+    }
+
+    .note-import-panel[hidden],
+    .note-import-url-form[hidden] {
+      display: none;
+    }
+
+    .note-import-panel-title {
+      margin: 0;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .note-import-options {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px;
+    }
+
+    .note-import-options button {
+      min-width: 0;
+      padding: 9px 7px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(44, 183, 161, 0.08);
+      color: var(--ink);
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .note-import-options button:hover,
+    .note-import-options button:focus-visible {
+      border-color: var(--accent);
+      outline: none;
+    }
+
+    .note-import-url-form {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .note-import-url-form label,
+    .note-import-url-form small {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    .note-import-url-row {
+      display: flex;
+      gap: 6px;
+    }
+
+    .note-import-url-row input {
+      flex: 1;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      color: var(--ink);
+      background: rgba(17, 29, 45, 0.8);
+    }
+
+    .note-import-url-row input:focus {
+      outline: 2px solid var(--accent);
+    }
+
+    .note-import-url-row button {
+      width: auto;
+      flex: none;
+    }
+
     .notes-list {
       flex: 1;
       overflow-y: auto;
@@ -768,8 +851,23 @@
         </div>
         <button id="btn-new-group" class="btn-add-step hidden" type="button">+ Neue Gruppe</button>
         <button id="btn-new-note" class="btn-new-note" type="button">+ Neue Notiz</button>
-        <button id="btn-import-note" class="btn-bookmark-notes" type="button">Textdatei als Notiz importieren</button>
-        <input id="note-import-file" type="file" hidden aria-label="Textdatei auswählen" />
+        <button id="btn-import-note" class="btn-bookmark-notes" type="button" aria-expanded="false" aria-controls="note-import-panel">Importieren ▾</button>
+        <div id="note-import-panel" class="note-import-panel" hidden>
+          <p class="note-import-panel-title">Text als neue Notiz übernehmen</p>
+          <div class="note-import-options">
+            <button id="btn-import-local" type="button">📁 Lokale Datei</button>
+            <button id="btn-import-url-choice" type="button">🔗 Per URL</button>
+          </div>
+          <input id="note-import-file" type="file" hidden aria-label="Textdatei auswählen" />
+          <form id="note-import-url-form" class="note-import-url-form" hidden>
+            <label for="note-import-url">Link zur Textdatei</label>
+            <div class="note-import-url-row">
+              <input id="note-import-url" type="url" inputmode="url" placeholder="https://github.com/…/datei.md" aria-label="URL einer Textdatei" required />
+              <button class="btn-bookmark-notes" type="submit">Laden</button>
+            </div>
+            <small>GitHub-Dateilinks, Markdown, JSON, TXT und andere Textdateien</small>
+          </form>
+        </div>
         <button id="btn-export-notes" class="btn-bookmark-notes" type="button">Alle Notizen exportieren (JSON)</button>
       </div>
       <div id="notes-list" class="notes-list">

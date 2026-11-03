@@ -46,7 +46,12 @@ const els = {
   btnNewGroup:     document.getElementById("btn-new-group"),
   btnNewNote:      document.getElementById("btn-new-note"),
   btnImportNote:   document.getElementById("btn-import-note"),
+  noteImportPanel: document.getElementById("note-import-panel"),
+  btnImportLocal: document.getElementById("btn-import-local"),
+  btnImportURLChoice: document.getElementById("btn-import-url-choice"),
   noteImportFile:  document.getElementById("note-import-file"),
+  noteImportURLForm: document.getElementById("note-import-url-form"),
+  noteImportURL: document.getElementById("note-import-url"),
   detailHead:      document.getElementById("detail-head"),
   detailTitleLabel:document.getElementById("detail-title-label"),
   btnCopy:         document.getElementById("btn-copy"),
@@ -902,7 +907,35 @@ els.btnNewNote.addEventListener("click", async () => {
   openEditor(null);
 });
 
-els.btnImportNote.addEventListener("click", () => els.noteImportFile.click());
+function setNoteImportPanel(open) {
+  els.noteImportPanel.hidden = !open;
+  els.btnImportNote.setAttribute("aria-expanded", String(open));
+  if (!open) els.noteImportURLForm.hidden = true;
+}
+
+els.btnImportNote.addEventListener("click", () => {
+  const open = els.noteImportPanel.hidden;
+  setNoteImportPanel(open);
+  if (open) els.btnImportLocal.focus();
+});
+els.btnImportLocal.addEventListener("click", () => els.noteImportFile.click());
+els.btnImportURLChoice.addEventListener("click", () => {
+  els.noteImportURLForm.hidden = false;
+  els.noteImportURL.focus();
+});
+document.addEventListener("click", event => {
+  if (!els.noteImportPanel.hidden &&
+      !els.noteImportPanel.contains(event.target) &&
+      !els.btnImportNote.contains(event.target)) {
+    setNoteImportPanel(false);
+  }
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && !els.noteImportPanel.hidden) {
+    setNoteImportPanel(false);
+    els.btnImportNote.focus();
+  }
+});
 els.noteImportFile.addEventListener("change", async () => {
   const file = els.noteImportFile.files?.[0];
   els.noteImportFile.value = "";
@@ -915,9 +948,48 @@ els.noteImportFile.addEventListener("change", async () => {
     document.querySelectorAll(".note-item").forEach(el => el.classList.remove("active"));
     const title = file.name.replace(/\.[^.]+$/, "").slice(0, 200) || "Importierte Notiz";
     openEditor(null, title, content);
+    setNoteImportPanel(false);
     setStatus(`Datei „${file.name}“ geladen. Mit Erstellen als Notiz speichern.`);
   } catch (err) {
     setStatus(err.message || "Datei konnte nicht gelesen werden.", true);
+  }
+});
+
+els.noteImportURLForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const sourceURL = els.noteImportURL.value.trim();
+  if (!sourceURL || !await flushEditorAutosave()) return;
+  const submit = els.noteImportURLForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  els.noteImportURLForm.setAttribute("aria-busy", "true");
+  try {
+    setStatus("Textdatei wird heruntergeladen…");
+    const imported = await request("/api/notes/import-url", {
+      method: "POST",
+      body: { url: sourceURL },
+    });
+    const created = await request("/api/notes", {
+      method: "POST",
+      body: {
+        title: imported.title,
+        content: imported.content,
+        type: "note",
+        tags: [],
+        bookmark_ids: [],
+        links_clickable: true,
+      },
+    });
+    pendingBookmarkIds = [];
+    await reloadNotes();
+    await selectNote(created.id);
+    els.noteImportURLForm.reset();
+    setNoteImportPanel(false);
+    setStatus(`„${imported.title}“ als Notiz gespeichert.`);
+  } catch (err) {
+    setStatus(err.message || "URL konnte nicht importiert werden.", true);
+  } finally {
+    submit.disabled = false;
+    els.noteImportURLForm.removeAttribute("aria-busy");
   }
 });
 

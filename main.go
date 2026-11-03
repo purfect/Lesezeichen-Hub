@@ -75,6 +75,7 @@ func main() {
 	mux.HandleFunc("/api/bookmarks", app.handleBookmarks)
 	mux.HandleFunc("/api/bookmarks/", app.handleBookmarkRoutes)
 	mux.HandleFunc("/api/notes", app.handleNotes)
+	mux.HandleFunc("/api/notes/import-url", app.handleNoteURLImport)
 	mux.HandleFunc("/api/notes/", app.handleNoteRoutes)
 	mux.HandleFunc("/api/note-groups", app.handleNoteGroups)
 	mux.HandleFunc("/api/note-groups/", app.handleNoteGroupRoutes)
