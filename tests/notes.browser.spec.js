@@ -41,6 +41,56 @@ test('Downloads a selected note as Markdown and all notes as JSON', async ({ pag
   expect(exported).toHaveProperty('note_groups');
 });
 
+test('Imports text files as editable notes and keeps their blank lines after saving', async ({ page, request }) => {
+  await page.goto('/static/notes.html');
+  for (const [name, content, blankLines] of [
+    ['abstand.txt', 'Erste Zeile\n\n\nZweite Zeile\n', 2],
+    ['daten.json', '{\n  "name": "Test",\n\n  "aktiv": true\n}\n', 1],
+    ['plan.md', '# Plan\n\n\nDanach', 2],
+  ]) {
+    const selectedFile = { name, mimeType: 'text/plain', buffer: Buffer.from(content) };
+    if (name === 'abstand.txt') {
+      const chooser = page.waitForEvent('filechooser');
+      await page.locator('#btn-import-note').click();
+      await (await chooser).setFiles(selectedFile);
+    } else {
+      await page.locator('#note-import-file').setInputFiles(selectedFile);
+    }
+    await expect(page.locator('#editor-title')).toHaveValue(name.replace(/\.[^.]+$/, ''));
+    await expect(page.locator('#editor-raw-mode')).toBeChecked();
+    await expect(page.locator('#editor-content')).toHaveValue(content);
+    await page.getByRole('button', { name: 'Erstellen', exact: true }).click();
+    const response = await (await request.get('/api/notes')).json();
+    const saved = response.notes.find(note => note.title === name.replace(/\.[^.]+$/, ''));
+    expect(saved.content).toBe(content);
+    await expect(page.locator('.note-markdown .note-blank-line')).toHaveCount(blankLines);
+    if (name === 'abstand.txt') {
+      const updated = '\nErste Zeile\n\n\nZweite Zeile\n\n';
+      await page.locator('#btn-edit').click();
+      await page.locator('#editor-raw-mode').check();
+      await page.locator('#editor-content').fill(updated);
+      await page.locator('#btn-cancel-edit').click();
+      expect(await savedContent(request, saved.id)).toBe(updated);
+      await expect(page.locator('.note-markdown .note-blank-line')).toHaveCount(4);
+    }
+  }
+});
+
+test('Rich editing shows saved blank lines and keeps them after an edit', async ({ page, request }) => {
+  const id = await createNote(request, 'Erste Zeile\n\n\nZweite Zeile');
+  await page.goto(`/static/notes.html?note_id=${id}`);
+  await expect(page.locator('.note-markdown .note-blank-line')).toHaveCount(2);
+  await page.locator('#btn-edit').click();
+  const rich = page.getByRole('textbox', { name: 'Inhalt der Notiz' });
+  await expect(rich.locator(':scope > .note-blank-line')).toHaveCount(2);
+  await rich.locator('p').first().click();
+  await page.keyboard.press('End');
+  await page.keyboard.type('!');
+  await page.locator('#btn-cancel-edit').click();
+  expect(await savedContent(request, id)).toBe('Erste Zeile!\n\n\nZweite Zeile');
+  await expect(page.locator('.note-markdown .note-blank-line')).toHaveCount(2);
+});
+
 test('Toolbar, selection, autosave, undo and type switching preserve the note', async ({ page, request }) => {
   const id = await createNote(request, 'Text für heute');
   const errors = [];

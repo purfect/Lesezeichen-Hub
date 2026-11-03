@@ -1,4 +1,4 @@
-import { Editor } from '@tiptap/core';
+import { Editor, Node as TiptapNode } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
 import { TaskList, TaskItem } from '@tiptap/extension-list';
@@ -7,6 +7,22 @@ import { Marked } from 'marked';
 import { createElement as createIcon, Bold, Italic, List, ListOrdered, ListChecks, Quote, Link, Code, SquareCode, Copy, Undo2, Redo2, X, Check } from 'lucide';
 
 const escapeText = text => String(text).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+const blankLineMarker = '\uE000NOTE_BLANK_LINE\uE001';
+const BlankLine = TiptapNode.create({
+  name: 'noteBlankLine',
+  group: 'block',
+  atom: true,
+  parseHTML: () => [{ tag: 'div.note-blank-line' }],
+  renderHTML: () => ['div', { class: 'note-blank-line', 'aria-hidden': 'true' }],
+  renderMarkdown: () => blankLineMarker,
+});
+
+function serializeEditorMarkdown(editor) {
+  return editor.getMarkdown().replace(/(?:\n\n)?\uE000NOTE_BLANK_LINE\uE001(?:\n\n\uE000NOTE_BLANK_LINE\uE001)*(?:\n\n)?/g, match => {
+    const count = match.split(blankLineMarker).length - 1;
+    return '\n'.repeat(count + (match.startsWith('\n\n') ? 1 : 0));
+  });
+}
 const safeURL = value => {
   try {
     const url = new URL(value);
@@ -20,6 +36,7 @@ const parser = new Marked({
   breaks: true,
   gfm: true,
   renderer: {
+    space: token => '<div class="note-blank-line" aria-hidden="true"></div>'.repeat(Math.max(0, (token.raw.match(/\n/g) || []).length - 1)),
     checkbox: () => '',
     list(token) {
       let html = '';
@@ -61,10 +78,24 @@ export function legacyMarkdown(source) {
 }
 
 export function renderMarkdown(source, linksClickable = true) {
-  const html = parser.parse(legacyMarkdown(source));
+  const tokens = parser.lexer(legacyMarkdown(source));
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (index === 0 && token.type === 'space') {
+      token.raw = `\n${token.raw}`;
+      continue;
+    }
+    // Marked absorbs the blank lines after headings into the heading token.
+    const trailing = token.type !== 'space' && token.raw.match(/\n{2,}$/)?.[0];
+    if (trailing) {
+      tokens.splice(index + 1, 0, { type: 'space', raw: trailing });
+      index++;
+    }
+  }
+  const html = parser.parser(tokens);
   const clean = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: ['p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'em', 's', 'del', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'a', 'hr', 'label', 'input', 'div', 'span'],
-    ALLOWED_ATTR: ['href', 'target', 'rel', 'start', 'data-type', 'data-checked', 'type', 'checked', 'disabled'],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'start', 'data-type', 'data-checked', 'type', 'checked', 'disabled', 'class', 'aria-hidden'],
     ALLOW_DATA_ATTR: false,
   });
   const template = document.createElement('template');
@@ -91,7 +122,7 @@ export function createDocument(element, source, onUpdate) {
       nested: true,
       HTMLAttributes: { 'data-type': 'taskItem' },
       a11y: { checkboxLabel: node => `Aufgabe: ${node.textContent || 'Neuer Schritt'}` },
-    }), Markdown],
+    }), BlankLine, Markdown],
     content: renderMarkdown(source),
     editorProps: { attributes: { class: 'note-rich-content', role: 'textbox', 'aria-label': 'Inhalt der Notiz', 'aria-multiline': 'true' } },
     onUpdate() {
@@ -101,7 +132,7 @@ export function createDocument(element, source, onUpdate) {
   });
   return {
     editor,
-    getContent: () => changed ? editor.getMarkdown() : source,
+    getContent: () => changed ? serializeEditorMarkdown(editor) : source,
     destroy: () => editor.destroy(),
   };
 }

@@ -45,6 +45,8 @@ const els = {
   btnTreeView:     document.getElementById("btn-tree-view"),
   btnNewGroup:     document.getElementById("btn-new-group"),
   btnNewNote:      document.getElementById("btn-new-note"),
+  btnImportNote:   document.getElementById("btn-import-note"),
+  noteImportFile:  document.getElementById("note-import-file"),
   detailHead:      document.getElementById("detail-head"),
   detailTitleLabel:document.getElementById("detail-title-label"),
   btnCopy:         document.getElementById("btn-copy"),
@@ -556,7 +558,7 @@ function renderNoteView(note) {
 }
 
 // ── Editor ────────────────────────────────────────────────────────────────
-function openEditor(note, prefillTitle = "") {
+function openEditor(note, prefillTitle = "", prefillContent = null) {
   closeRichEditor();
   isEditing = true;
   if (editorAutosave?.timer) clearTimeout(editorAutosave.timer);
@@ -573,7 +575,7 @@ function openEditor(note, prefillTitle = "") {
 
   const isNew  = !note;
   const title   = prefillTitle || note?.title   || "";
-  const content = note?.content || "";
+  const content = prefillContent ?? note?.content ?? "";
   const type    = note?.type === "checklist" ? "note" : (note?.type || "note");
   const tags    = (note?.tags || []).join(", ");
   const groupId = note?.group_id ?? "";
@@ -666,6 +668,11 @@ function openEditor(note, prefillTitle = "") {
       richNoteEditor = NoteEditor.mountEditor(richContainer, rawContent.value, scheduleEditorAutosave);
     }
   });
+  if (prefillContent !== null) {
+    rawMode.checked = true;
+    rawMode.dispatchEvent(new Event("change"));
+    rawContent.value = content;
+  }
   typeSelect.addEventListener("change", () => {
     if (previousType === "vault" && typeSelect.value !== "vault" && !confirm("Den entschlüsselten Inhalt als unverschlüsselte Notiz speichern? Die Änderung wird erst mit Speichern übernommen.")) {
       typeSelect.value = previousType;
@@ -893,6 +900,25 @@ els.btnNewNote.addEventListener("click", async () => {
   pendingBookmarkIds = [];
   document.querySelectorAll(".note-item").forEach(el => el.classList.remove("active"));
   openEditor(null);
+});
+
+els.btnImportNote.addEventListener("click", () => els.noteImportFile.click());
+els.noteImportFile.addEventListener("change", async () => {
+  const file = els.noteImportFile.files?.[0];
+  els.noteImportFile.value = "";
+  if (!file) return;
+  try {
+    const content = await file.text();
+    if (!await flushEditorAutosave()) return;
+    activeNoteId = null;
+    pendingBookmarkIds = [];
+    document.querySelectorAll(".note-item").forEach(el => el.classList.remove("active"));
+    const title = file.name.replace(/\.[^.]+$/, "").slice(0, 200) || "Importierte Notiz";
+    openEditor(null, title, content);
+    setStatus(`Datei „${file.name}“ geladen. Mit Erstellen als Notiz speichern.`);
+  } catch (err) {
+    setStatus(err.message || "Datei konnte nicht gelesen werden.", true);
+  }
 });
 
 els.btnEdit.addEventListener("click", () => {

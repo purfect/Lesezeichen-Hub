@@ -10,6 +10,7 @@
 .note-format-toolbar button:focus-visible, .note-link-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .note-rich-content { min-height: min(320px, 40dvh); max-height: min(560px, 55dvh); overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: 16px; outline: none; }
 .note-markdown.note-view-content, .note-rich-content { white-space: normal; line-height: 1.65; color: var(--ink); font-size: 0.93rem; overflow-wrap: anywhere; letter-spacing: 0; }
+:is(.note-markdown, .note-rich-content) .note-blank-line { height: 1.65em; }
 .note-markdown > :first-child, .note-rich-content > :first-child { margin-top: 0; }
 .note-markdown > :last-child, .note-rich-content > :last-child { margin-bottom: 0; }
 :is(.note-markdown, .note-rich-content) p { margin: 0; }

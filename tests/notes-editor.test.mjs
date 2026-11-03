@@ -20,6 +20,20 @@ test('Markdown and legacy code render safely with preserved line breaks', () => 
   assert.match(html, /```/);
 });
 
+test('Blank lines appear in both the read view and the rich editor', () => {
+  const source = 'Erste Zeile\n\n\nZweite Zeile\n\n';
+  const html = renderMarkdown(source);
+  assert.equal((html.match(/class="note-blank-line"/g) || []).length, 3);
+  const element = document.body.appendChild(document.createElement('div'));
+  const adapter = createDocument(element, source);
+  assert.equal(element.querySelectorAll('.note-rich-content > .note-blank-line').length, 3);
+  assert.equal(adapter.getContent(), source);
+  adapter.editor.commands.insertContentAt(2, 'X');
+  assert.equal(adapter.getContent(), 'EXrste Zeile\n\n\nZweite Zeile\n\n');
+  adapter.destroy();
+  element.remove();
+});
+
 test('Links honor the clickable option and disallow unsafe protocols', () => {
   assert.match(renderMarkdown('[Gut](https://example.com)'), /rel="noopener noreferrer"/);
   assert.doesNotMatch(renderMarkdown('[Gut](https://example.com)', false), /<a/);
@@ -32,7 +46,8 @@ test('Editor keeps untouched source and serializes actual changes including empt
   const source = '# Titel\n\n**Text**\nNeue Zeile';
   const adapter = createDocument(element, source);
   assert.equal(adapter.getContent(), source);
-  assert.equal(adapter.editor.getText(), 'Titel\n\nText\nNeue Zeile');
+  assert.equal(element.querySelector('h1').textContent, 'Titel');
+  assert.equal(element.querySelector('p').textContent, 'TextNeue Zeile');
   adapter.editor.commands.setContent('<h2>Neu</h2><p><strong>Fett</strong></p>');
   assert.match(adapter.getContent(), /## Neu/);
   assert.match(adapter.getContent(), /\*\*Fett\*\*/);
