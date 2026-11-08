@@ -370,14 +370,21 @@ func (app *application) fetchModuleRepositories(ctx context.Context) ([]githubRe
 	}
 	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("modulkatalog konnte nicht geladen werden: %w", err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("modulkatalog konnte nicht geladen werden: %w", err)
+		}
+		repositories, fallbackErr := app.fetchModuleRepositoriesFromWeb(ctx)
+		if fallbackErr != nil {
+			return nil, fmt.Errorf("GitHub-API nicht erreichbar (%v); Ersatzliste konnte nicht geladen werden: %w", err, fallbackErr)
+		}
+		return repositories, nil
 	}
 	defer response.Body.Close()
 	var repositories []githubRepository
-	if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests {
+	if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= http.StatusInternalServerError {
 		repositories, err = app.fetchModuleRepositoriesFromWeb(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("GitHub-API-Limit erreicht und Ersatzliste konnte nicht geladen werden: %w", err)
+			return nil, fmt.Errorf("GitHub antwortet mit Status %d; Ersatzliste konnte nicht geladen werden: %w", response.StatusCode, err)
 		}
 	} else if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub antwortet mit Status %d", response.StatusCode)

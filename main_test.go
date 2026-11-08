@@ -1285,6 +1285,41 @@ func TestModuleCatalogFallsBackWhenGithubRateLimitIsExhausted(t *testing.T) {
 	}
 }
 
+func TestModuleCatalogFallsBackWhenGithubAPIHasServerError(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			db := openTestDB(t)
+			if err := initializeSchema(db); err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/orgs/Lesezeichen-Hub/repos":
+					w.WriteHeader(status)
+				case "/orgs/Lesezeichen-Hub/repositories":
+					_, _ = w.Write([]byte(`<a href="/Lesezeichen-Hub/Testmodul">Testmodul</a>`))
+				case "/Lesezeichen-Hub/Testmodul":
+					_, _ = w.Write([]byte(`<a href="/topics/werkzeug">werkzeug</a><a href="/Lesezeichen-Hub/Testmodul/commits/main/">Commits</a>`))
+				case "/Lesezeichen-Hub/Testmodul/main/version.json":
+					writeJSON(w, http.StatusOK, moduleVersionManifest{Version: "1.2.3"})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			app := &application{db: db, moduleAPIBase: server.URL, moduleWebBase: server.URL, moduleManifestBase: server.URL}
+			modules, err := app.fetchModuleCatalog(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(modules) != 1 || modules[0].Name != "Testmodul" || modules[0].Category != "Werkzeuge" || modules[0].Version != "1.2.3" {
+				t.Fatalf("modules = %+v, want fallback catalog with current version", modules)
+			}
+		})
+	}
+}
+
 func TestModuleCatalogCachesMetadataButFetchesVersionsLive(t *testing.T) {
 	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {
