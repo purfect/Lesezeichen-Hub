@@ -1320,6 +1320,100 @@ func TestModuleCatalogFallsBackWhenGithubAPIHasServerError(t *testing.T) {
 	}
 }
 
+func TestInstalledCatalogModuleRemainsVisibleAndUpdatableWhenGithubListingsFail(t *testing.T) {
+	db := openTestDB(t)
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	installBase := testTempDir(t)
+	moduleRoot := filepath.Join(installBase, "Testmodul")
+	if err := os.MkdirAll(moduleRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "index.html"), []byte("alt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`INSERT INTO modules(name, root_path, source_url, installed_version, managed) VALUES(?, ?, ?, ?, 1)`,
+		"Testmodul", moduleRoot, "https://github.com/Lesezeichen-Hub/Testmodul", "1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleID, _ := result.LastInsertId()
+
+	var archive bytes.Buffer
+	zipWriter := zip.NewWriter(&archive)
+	indexFile, err := zipWriter.Create("Testmodul-head/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexFile.Write([]byte("neu")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/orgs/Lesezeichen-Hub/repos":
+			w.WriteHeader(http.StatusGatewayTimeout)
+		case "/orgs/Lesezeichen-Hub/repositories":
+			w.WriteHeader(http.StatusInternalServerError)
+		case "/Lesezeichen-Hub/Testmodul/HEAD/version.json":
+			writeJSON(w, http.StatusOK, moduleVersionManifest{Version: "1.1.0"})
+		case "/repos/Lesezeichen-Hub/Testmodul/zipball/HEAD":
+			w.Header().Set("Content-Type", "application/zip")
+			_, _ = w.Write(archive.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	app := &application{db: db, moduleAPIBase: server.URL, moduleWebBase: server.URL, moduleManifestBase: server.URL, moduleInstallDir: installBase}
+
+	catalogResponse := httptest.NewRecorder()
+	app.handleModuleCatalog(catalogResponse, httptest.NewRequest(http.MethodGet, "/api/module-catalog", nil))
+	if catalogResponse.Code != http.StatusOK {
+		t.Fatalf("catalog status = %d, body = %s", catalogResponse.Code, catalogResponse.Body.String())
+	}
+	var catalog struct {
+		Modules []catalogModule `json:"modules"`
+		Warning string          `json:"warning"`
+	}
+	if err := json.Unmarshal(catalogResponse.Body.Bytes(), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if catalog.Warning == "" || len(catalog.Modules) != 1 || !catalog.Modules[0].Installed || !catalog.Modules[0].UpdateAvailable {
+		t.Fatalf("offline catalog = %+v", catalog)
+	}
+
+	updateResponse := httptest.NewRecorder()
+	app.handleModuleRoutes(updateResponse, httptest.NewRequest(http.MethodPost, "/api/modules/"+strconv.FormatInt(moduleID, 10)+"/update", nil))
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", updateResponse.Code, updateResponse.Body.String())
+	}
+	if body, err := os.ReadFile(filepath.Join(moduleRoot, "index.html")); err != nil || string(body) != "neu" {
+		t.Fatalf("updated index = %q, error = %v", body, err)
+	}
+	var installedVersion string
+	if err := db.QueryRow(`SELECT installed_version FROM modules WHERE id = ?`, moduleID).Scan(&installedVersion); err != nil || installedVersion != "1.1.0" {
+		t.Fatalf("installed version = %q, error = %v", installedVersion, err)
+	}
+}
+
+func TestCatalogRepositoryFromSourceRejectsUntrustedURLs(t *testing.T) {
+	for _, source := range []string{
+		"http://github.com/Lesezeichen-Hub/Testmodul",
+		"https://github.com.evil.test/Lesezeichen-Hub/Testmodul",
+		"https://github.com/Andere-Organisation/Testmodul",
+		"https://github.com/Lesezeichen-Hub/Testmodul/extra",
+		"https://github.com/Lesezeichen-Hub/Testmodul?download=1",
+	} {
+		if _, _, ok := catalogRepositoryFromSource(source); ok {
+			t.Errorf("untrusted source accepted: %s", source)
+		}
+	}
+}
+
 func TestModuleCatalogCachesMetadataButFetchesVersionsLive(t *testing.T) {
 	db := openTestDB(t)
 	if err := initializeSchema(db); err != nil {

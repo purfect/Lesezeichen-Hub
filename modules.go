@@ -167,8 +167,19 @@ func (app *application) handleModuleCatalog(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	modules, err := app.fetchModuleCatalog(r.Context())
+	catalogCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	modules, err := app.fetchModuleCatalog(catalogCtx)
+	cancel()
 	if err != nil {
+		local, localErr := app.localCatalogModules(r.Context(), 0)
+		if localErr == nil && len(local) > 0 {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"modules": local,
+				"warning": "GitHub-Katalog derzeit nicht erreichbar. Es werden nur bereits installierte Module angezeigt.",
+				"detail":  err.Error(),
+			})
+			return
+		}
 		writeErr(w, http.StatusBadGateway, err)
 		return
 	}
@@ -310,6 +321,63 @@ func (app *application) loadCatalogModules(ctx context.Context, include func(nam
 	return modules, nil
 }
 
+// localCatalogModules keeps installed catalog modules visible when both GitHub listings fail.
+// The source URL was saved when the module was installed and is validated before reuse.
+func (app *application) localCatalogModules(ctx context.Context, selectedID int64) ([]catalogModule, error) {
+	rows, err := app.db.QueryContext(ctx, `SELECT id, source_url, installed_version FROM modules WHERE managed = 1 ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	modules := make([]catalogModule, 0)
+	for rows.Next() {
+		var id int64
+		var sourceURL, installedVersion string
+		if err := rows.Scan(&id, &sourceURL, &installedVersion); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if selectedID != 0 && id != selectedID {
+			continue
+		}
+		name, repositoryURL, ok := catalogRepositoryFromSource(sourceURL)
+		if !ok {
+			continue
+		}
+		cached, _ := app.cachedModuleMetadata(name)
+		modules = append(modules, catalogModule{
+			Name: name, Category: catalogModuleCategory(cached.Topics), Description: cached.Description,
+			RepositoryURL: repositoryURL, DefaultBranch: "HEAD", InstalledVersion: installedVersion,
+			Installed: true, LocalID: id, LocalURL: fmt.Sprintf("/modules/%d/index.html", id),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	forEachParallel(len(modules), moduleFetchConcurrency, func(index int) {
+		module := &modules[index]
+		module.Version = app.fetchModuleVersion(ctx, module.Name, module.DefaultBranch)
+		module.UpdateAvailable = module.InstalledVersion != "" && module.Version != "" && isNewerVersion(module.InstalledVersion, module.Version)
+	})
+	sort.Slice(modules, func(i, j int) bool { return strings.ToLower(modules[i].Name) < strings.ToLower(modules[j].Name) })
+	return modules, nil
+}
+
+func catalogRepositoryFromSource(raw string) (string, string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "github.com") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", "", false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) != 2 || !strings.EqualFold(parts[0], moduleGithubOwner) || !regexp.MustCompile(`^[A-Za-z0-9_.-]+$`).MatchString(parts[1]) {
+		return "", "", false
+	}
+	return parts[1], "https://github.com/" + moduleGithubOwner + "/" + parts[1], true
+}
+
 func forEachParallel(count, limit int, fn func(index int)) {
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, limit)
@@ -368,7 +436,7 @@ func (app *application) fetchModuleRepositories(ctx context.Context) ([]githubRe
 	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	response, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("modulkatalog konnte nicht geladen werden: %w", err)
@@ -450,7 +518,7 @@ func (app *application) fetchModuleRepositoriesFromWeb(ctx context.Context) ([]g
 	}
 	req.Header.Set("User-Agent", "Lesezeichen-Hub/"+appVersion)
 	req.Header.Set("Cache-Control", "no-cache")
-	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	response, err := (&http.Client{Timeout: 8 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -940,9 +1008,15 @@ func (app *application) updateCatalogModule(ctx context.Context, moduleID int64)
 		return catalogModule{}, err
 	}
 	repositoryName := filepath.Base(currentTopLevel)
-	selected, err := app.findCatalogModule(ctx, moduleName, repositoryName)
+	catalogCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	selected, err := app.findCatalogModule(catalogCtx, moduleName, repositoryName)
+	cancel()
 	if err != nil {
-		return catalogModule{}, err
+		local, localErr := app.localCatalogModules(ctx, moduleID)
+		if localErr != nil || len(local) == 0 {
+			return catalogModule{}, err
+		}
+		selected = local[0]
 	}
 	archivePath, err := app.downloadCatalogModuleArchive(ctx, selected, installBase)
 	if err != nil {
@@ -1023,7 +1097,7 @@ func (app *application) downloadCatalogModuleArchive(ctx context.Context, module
 	if strings.TrimSpace(app.moduleAPIBase) != "" && !strings.EqualFold(strings.TrimRight(app.moduleAPIBase, "/"), githubAPIBase) {
 		archiveURL = fmt.Sprintf("%s/repos/%s/%s/zipball/%s", strings.TrimRight(app.moduleAPIBase, "/"), moduleGithubOwner, url.PathEscape(module.Name), url.PathEscape(module.DefaultBranch))
 	} else {
-		archiveURL = fmt.Sprintf("%s/archive/refs/heads/%s.zip", strings.TrimRight(module.RepositoryURL, "/"), url.PathEscape(module.DefaultBranch))
+		archiveURL = fmt.Sprintf("https://codeload.github.com/%s/%s/zip/HEAD", moduleGithubOwner, url.PathEscape(module.Name))
 	}
 	if err := downloadFile(ctx, archiveURL, archivePath); err != nil {
 		_ = os.Remove(archivePath)

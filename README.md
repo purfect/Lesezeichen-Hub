@@ -112,6 +112,8 @@ Die Dateien werden über den Hub unter `/modules/...` ausgeliefert, sodass relat
 
 Über **Module** in der Hauptnavigation lassen sich registrierte Module prüfen, umbenennen, mit einem neuen Ordner verbinden, aus dem Katalog aktualisieren und vollständig inklusive Start-Lesezeichen löschen. Der Katalog liest, sofern vorhanden, `version.json` eines Moduls direkt über `raw.githubusercontent.com`; dadurch wird für die Versionsanzeige kein GitHub-REST-API-Kontingent verbraucht. Bei Kataloginstallationen speichert der Hub die erkannte Version und markiert beim späteren Prüfen verfügbare Updates mit installierter und neuer Version. Module ohne Manifest bleiben nutzbar und werden als ohne Versionsangabe angezeigt. Aufgelöste Symlinks und Windows-Junctions dürfen den registrierten Modulordner bei der Dateiauslieferung nicht verlassen.
 
+Fallen sowohl die GitHub-API als auch die GitHub-Webseite aus, zeigt der Katalog die bereits installierten Module mit einem Hinweis auf die Störung. Deren Versionen werden weiterhin über `raw.githubusercontent.com` geprüft; bestehende Module lassen sich über `codeload.github.com` aktualisieren. Neue Module erscheinen wieder, sobald der GitHub-Katalog erreichbar ist.
+
 Der Server muss lokal unter Windows laufen und Zugriff auf den angegebenen Ordner haben. Änderungen an den Moduldateien werden beim nächsten Aufruf direkt verwendet.
 
 ## Windows Start und Stop per Klick

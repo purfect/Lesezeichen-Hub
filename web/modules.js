@@ -41,6 +41,8 @@ async function onImportModule(event) {
 async function loadModules(showResult = false) {
   els.check.disabled = true;
   setStatus("Lokale Module werden geladen...");
+  els.catalogSummary.textContent = "Online-Katalog wird geladen...";
+  els.catalogList.innerHTML = '<div class="empty-state">GitHub-Katalog wird geprüft. Installierte Module findest du weiter unten.</div>';
   try {
     const localPayload = await request("/api/modules");
     renderModules(localPayload.modules || []);
@@ -55,8 +57,8 @@ async function loadModules(showResult = false) {
 async function loadCatalog(showResult) {
   try {
     const catalogPayload = await request("/api/module-catalog");
-    renderCatalog(catalogPayload.modules || []);
-    setStatus(showResult ? "Modulliste aktualisiert." : "Bereit.");
+    renderCatalog(catalogPayload.modules || [], catalogPayload.warning, catalogPayload.detail);
+    setStatus(catalogPayload.warning || (showResult ? "Modulliste aktualisiert." : "Bereit."), Boolean(catalogPayload.warning));
   } catch (error) {
     renderCatalogUnavailable(error);
     setStatus("Lokale Module sind verfügbar. Der Online-Katalog konnte nicht geladen werden.", true);
@@ -74,10 +76,20 @@ function renderCatalogUnavailable(error) {
   els.catalogList.appendChild(notice);
 }
 
-function renderCatalog(modules) {
+function renderCatalog(modules, warning = "", detail = "") {
   els.catalogList.innerHTML = "";
   const installed = modules.filter((item) => item.installed).length;
-  els.catalogSummary.textContent = `${modules.length} Module, davon ${installed} eingerichtet.`;
+  els.catalogSummary.textContent = warning ? `Eingeschränkte Ansicht · ${installed} installierte Module.` : `${modules.length} Module, davon ${installed} eingerichtet.`;
+  if (warning) {
+    const notice = document.createElement("div");
+    notice.className = "catalog-unavailable";
+    const title = document.createElement("strong");
+    title.textContent = warning;
+    const explanation = document.createElement("p");
+    explanation.textContent = detail;
+    notice.append(title, explanation);
+    els.catalogList.appendChild(notice);
+  }
   if (modules.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
@@ -190,7 +202,7 @@ function renderModules(modules) {
         <label>Name<input name="name" value="${escapeHTML(module.name)}" maxlength="100" required /></label>
         <label>Lokaler Ordner<span class="path-picker"><input name="path" value="${escapeHTML(module.path)}" required /><button class="ghost choose-path" type="button">Ordner wählen</button></span></label>
         <div class="module-actions">
-          ${isExternal ? '<button class="update-module" type="button">Neu laden</button>' : (module.managed && !module.installed_version ? '<button class="update-module" type="button">Aktualisieren</button>' : "")}
+          ${isExternal ? '<button class="update-module" type="button">Neu laden</button>' : (module.managed ? '<button class="update-module" type="button">Aktualisieren</button>' : "")}
           <button type="submit">Änderungen speichern</button>
           <button class="danger delete-module" type="button">Vollständig löschen</button>
         </div>
