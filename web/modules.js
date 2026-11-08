@@ -57,7 +57,7 @@ async function loadModules(showResult = false) {
 async function loadCatalog(showResult) {
   try {
     const catalogPayload = await request("/api/module-catalog");
-    renderCatalog(catalogPayload.modules || [], catalogPayload.warning, catalogPayload.detail);
+    renderCatalog(catalogPayload.modules || [], catalogPayload.warning, catalogPayload.detail, catalogPayload.error_id);
     setStatus(catalogPayload.warning || (showResult ? "Modulliste aktualisiert." : "Bereit."), Boolean(catalogPayload.warning));
   } catch (error) {
     renderCatalogUnavailable(error);
@@ -76,7 +76,7 @@ function renderCatalogUnavailable(error) {
   els.catalogList.appendChild(notice);
 }
 
-function renderCatalog(modules, warning = "", detail = "") {
+function renderCatalog(modules, warning = "", detail = "", errorID = "") {
   els.catalogList.innerHTML = "";
   const installed = modules.filter((item) => item.installed).length;
   els.catalogSummary.textContent = warning ? `Eingeschränkte Ansicht · ${installed} installierte Module.` : `${modules.length} Module, davon ${installed} eingerichtet.`;
@@ -88,6 +88,11 @@ function renderCatalog(modules, warning = "", detail = "") {
     const explanation = document.createElement("p");
     explanation.textContent = detail;
     notice.append(title, explanation);
+    if (errorID) {
+      const reference = document.createElement("small");
+      reference.textContent = `Fehler-ID ${errorID} · Log: .runtime/error.log`;
+      notice.appendChild(reference);
+    }
     els.catalogList.appendChild(notice);
   }
   if (modules.length === 0) {
@@ -269,7 +274,10 @@ async function request(path, options = {}) {
     ...options,
   });
   const payload = response.headers.get("content-type")?.includes("application/json") ? await response.json() : null;
-  if (!response.ok) throw new Error(payload?.error || `Fehler (${response.status})`);
+  if (!response.ok) {
+    const message = payload?.error || `Fehler (${response.status})`;
+    throw new Error(payload?.error_id ? `${message} · Fehler-ID ${payload.error_id} (.runtime/error.log)` : message);
+  }
   return payload;
 }
 

@@ -1427,7 +1427,8 @@ async function request(url, opts = {}) {
   const res = await fetch(url, options);
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(json.error || `HTTP ${res.status}`);
+    const message = json.error || `HTTP ${res.status}`;
+    throw new Error(json.error_id ? `${message} · Fehler-ID ${json.error_id} (.runtime/error.log)` : message);
   }
   return json;
 }

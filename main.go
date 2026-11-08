@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -18,6 +19,9 @@ import (
 var embeddedWebFiles embed.FS
 
 func main() {
+	if err := setupErrorLog(); err != nil {
+		log.Printf("error log could not be opened: %v", err)
+	}
 	dbPath := envOrDefault("BOOKMARK_DB_PATH", "./data.db")
 	addr := envOrDefault("ADDR", "127.0.0.1:2222")
 
@@ -121,7 +125,7 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("Lesezeichen-Server laeuft auf http://%s", addr)
+	fmt.Printf("Lesezeichen-Server laeuft auf http://%s\n", addr)
 	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("listen: %v", err)
 	}

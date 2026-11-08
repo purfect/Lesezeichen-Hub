@@ -248,7 +248,8 @@ async function request(path, options = {}) {
   const payload = isJSON ? await response.json() : null;
 
   if (!response.ok) {
-    throw new Error(payload?.error || `Fehler (${response.status})`);
+    const message = payload?.error || `Fehler (${response.status})`;
+    throw new Error(payload?.error_id ? `${message} · Fehler-ID ${payload.error_id} (.runtime/error.log)` : message);
   }
 
   return payload;

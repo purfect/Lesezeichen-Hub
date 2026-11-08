@@ -173,10 +173,12 @@ func (app *application) handleModuleCatalog(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		local, localErr := app.localCatalogModules(r.Context(), 0)
 		if localErr == nil && len(local) > 0 {
+			id := logOperationalFailure("module_catalog_unavailable", err)
 			writeJSON(w, http.StatusOK, map[string]any{
-				"modules": local,
-				"warning": "GitHub-Katalog derzeit nicht erreichbar. Es werden nur bereits installierte Module angezeigt.",
-				"detail":  err.Error(),
+				"modules":  local,
+				"warning":  "GitHub-Katalog derzeit nicht erreichbar. Es werden nur bereits installierte Module angezeigt.",
+				"detail":   err.Error(),
+				"error_id": id,
 			})
 			return
 		}

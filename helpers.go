@@ -248,5 +248,16 @@ func methodNotAllowed(w http.ResponseWriter) {
 }
 
 func writeErr(w http.ResponseWriter, status int, err error) {
-	writeJSON(w, status, apiError{Error: err.Error()})
+	if status < http.StatusInternalServerError {
+		writeJSON(w, status, apiError{Error: err.Error()})
+		return
+	}
+	id := nextErrorID()
+	if writer, ok := w.(*errorResponseWriter); ok {
+		writer.errorID = id
+		writer.cause = err
+	} else {
+		logHTTPFailure(id, status, "unknown", "unknown", err)
+	}
+	writeJSON(w, status, apiError{Error: publicServerError(status), ErrorID: id})
 }

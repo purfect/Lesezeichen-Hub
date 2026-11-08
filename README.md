@@ -306,6 +306,7 @@ Import-Hinweise:
 
 ## Troubleshooting
 
+- Serverfehler und Ausfälle externer Dienste stehen mit Zeit, Ursache und Fehler-ID in `.runtime/error.log` neben der EXE. Die Datei wird bei 1 MB rotiert (`error.log.1`); normale Seitenaufrufe werden nicht protokolliert. Die Fehler-ID aus der Oberfläche hilft beim Zuordnen.
 - Kein Zahnrad sichtbar: Seite mit Strg+F5 hart neu laden
 - Falscher Port: Startskript auf 3233 pruefen oder Port als Parameter uebergeben
 - Build nicht gefunden: Sicherstellen, dass Lesezeichen-Hub.exe im Projektordner liegt

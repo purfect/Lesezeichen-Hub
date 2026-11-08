@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1369,6 +1370,10 @@ func TestInstalledCatalogModuleRemainsVisibleAndUpdatableWhenGithubListingsFail(
 	}))
 	defer server.Close()
 	app := &application{db: db, moduleAPIBase: server.URL, moduleWebBase: server.URL, moduleManifestBase: server.URL, moduleInstallDir: installBase}
+	logPath := filepath.Join(t.TempDir(), "error.log")
+	previousLog := log.Writer()
+	log.SetOutput(&rotatingErrorLog{path: logPath, maxBytes: maxErrorLogBytes})
+	t.Cleanup(func() { log.SetOutput(previousLog) })
 
 	catalogResponse := httptest.NewRecorder()
 	app.handleModuleCatalog(catalogResponse, httptest.NewRequest(http.MethodGet, "/api/module-catalog", nil))
@@ -1378,12 +1383,17 @@ func TestInstalledCatalogModuleRemainsVisibleAndUpdatableWhenGithubListingsFail(
 	var catalog struct {
 		Modules []catalogModule `json:"modules"`
 		Warning string          `json:"warning"`
+		ErrorID string          `json:"error_id"`
 	}
 	if err := json.Unmarshal(catalogResponse.Body.Bytes(), &catalog); err != nil {
 		t.Fatal(err)
 	}
-	if catalog.Warning == "" || len(catalog.Modules) != 1 || !catalog.Modules[0].Installed || !catalog.Modules[0].UpdateAvailable {
+	if catalog.Warning == "" || catalog.ErrorID == "" || len(catalog.Modules) != 1 || !catalog.Modules[0].Installed || !catalog.Modules[0].UpdateAvailable {
 		t.Fatalf("offline catalog = %+v", catalog)
+	}
+	logEntry, err := os.ReadFile(logPath)
+	if err != nil || !strings.Contains(string(logEntry), catalog.ErrorID) || !strings.Contains(string(logEntry), "module_catalog_unavailable") {
+		t.Fatalf("error log = %q, error = %v, expected ID %q", logEntry, err, catalog.ErrorID)
 	}
 
 	updateResponse := httptest.NewRecorder()

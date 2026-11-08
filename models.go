@@ -171,7 +171,8 @@ type githubRepository struct {
 }
 
 type apiError struct {
-	Error string `json:"error"`
+	Error   string `json:"error"`
+	ErrorID string `json:"error_id,omitempty"`
 }
 
 type updateInfo struct {

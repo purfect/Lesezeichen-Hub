@@ -22,10 +22,41 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
+type errorResponseWriter struct {
+	http.ResponseWriter
+	status  int
+	errorID string
+	cause   error
+}
+
+func (writer *errorResponseWriter) WriteHeader(status int) {
+	if writer.status == 0 {
+		writer.status = status
+	}
+	writer.ResponseWriter.WriteHeader(status)
+}
+
+func (writer *errorResponseWriter) Write(body []byte) (int, error) {
+	if writer.status == 0 {
+		writer.status = http.StatusOK
+	}
+	return writer.ResponseWriter.Write(body)
+}
+
+func (writer *errorResponseWriter) Unwrap() http.ResponseWriter {
+	return writer.ResponseWriter
+}
+
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.Path)
-		next.ServeHTTP(w, r)
+		writer := &errorResponseWriter{ResponseWriter: w}
+		next.ServeHTTP(writer, r)
+		if writer.status >= http.StatusInternalServerError {
+			if writer.errorID == "" {
+				writer.errorID = nextErrorID()
+			}
+			logHTTPFailure(writer.errorID, writer.status, r.Method, r.URL.Path, writer.cause)
+		}
 	})
 }
 
@@ -33,8 +64,9 @@ func recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				log.Printf("panic in request %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
-				http.Error(w, "interner serverfehler", http.StatusInternalServerError)
+				id := nextErrorID()
+				log.Printf("level=ERROR id=%s status=500 method=%s path=%q panic=%q\n%s", id, r.Method, r.URL.Path, rec, debug.Stack())
+				writeJSON(w, http.StatusInternalServerError, apiError{Error: publicServerError(http.StatusInternalServerError), ErrorID: id})
 			}
 		}()
 
