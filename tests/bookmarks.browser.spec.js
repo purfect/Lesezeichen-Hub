@@ -24,13 +24,16 @@ async function createBookmark(request) {
   return (await bookmarkResponse.json()).id;
 }
 
-test('Removes a bookmark reminder directly from its dashboard entry', async ({ page, request }) => {
+test('Removes a bookmark reminder directly from the dashboard alert list', async ({ page, request }) => {
   const bookmarkId = await createBookmark(request);
   await page.goto('/');
 
+  const alert = page.locator('#reminder-alerts-list li').filter({ hasText: 'Fälligkeit direkt entfernen' });
+  await expect(alert).toContainText('überfällig');
+  await alert.getByRole('button', { name: 'Fälligkeit für Fälligkeit direkt entfernen entfernen' }).click();
+  await expect(alert).toHaveCount(0);
+
   const bookmark = page.locator(`.bookmark-item[data-bookmark-id="${bookmarkId}"]`);
-  await expect(bookmark.locator('.bookmark-reminder')).toContainText('Wiedervorlage überfällig');
-  await bookmark.getByRole('button', { name: 'Fälligkeit entfernen' }).click();
   await expect(bookmark.locator('.bookmark-reminder')).toBeHidden();
 
   const stateResponse = await request.get('/api/state');

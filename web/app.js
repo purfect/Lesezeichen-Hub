@@ -1411,6 +1411,7 @@ function renderReminderAlerts() {
       href: bookmark.url,
       external: true,
       date: parseBookmarkDate(bookmark.remind_at),
+      bookmark,
     }));
   const noteAlerts = state.dueNotes
     .map((note) => ({
@@ -1459,7 +1460,25 @@ function renderReminderAlerts() {
       meta.textContent = `fällig in ${days} Tag(en)`;
     }
 
-    li.appendChild(link);
+    const entry = document.createElement("div");
+    entry.className = "reminder-alert-entry";
+    entry.appendChild(link);
+    if (alert.bookmark) {
+      const clearButton = document.createElement("button");
+      clearButton.className = "ghost clear-bookmark-reminder";
+      clearButton.type = "button";
+      clearButton.textContent = "X";
+      clearButton.title = "Fälligkeit entfernen";
+      clearButton.setAttribute("aria-label", `Fälligkeit für ${alert.title} entfernen`);
+      clearButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClearBookmarkReminder(alert.bookmark, clearButton);
+      });
+      entry.appendChild(clearButton);
+    }
+
+    li.appendChild(entry);
     li.appendChild(meta);
     els.reminderAlertsList.appendChild(li);
   }

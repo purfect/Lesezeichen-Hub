@@ -1087,6 +1087,12 @@ button.danger:hover {
   gap: 2px;
 }
 
+.reminder-alert-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .reminder-alerts-list a {
   color: #ffd5d9;
   text-decoration: none;
