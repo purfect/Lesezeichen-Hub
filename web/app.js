@@ -1194,20 +1194,36 @@ function render() {
         const due = isBookmarkAlert(bookmark);
         const daysUntil = getDaysUntil(remindDate);
         const formatted = remindDate.toLocaleDateString("de-DE");
+        let reminderLabel;
         if (daysUntil < 0) {
-          reminderNode.textContent = `Wiedervorlage überfällig: ${formatted}`;
+          reminderLabel = `Wiedervorlage überfällig: ${formatted}`;
         } else if (daysUntil <= 3) {
-          reminderNode.textContent = `Wiedervorlage bald: ${formatted}`;
+          reminderLabel = `Wiedervorlage bald: ${formatted}`;
         } else {
-          reminderNode.textContent = `Wiedervorlage am: ${formatted}`;
+          reminderLabel = `Wiedervorlage am: ${formatted}`;
         }
+        const label = document.createElement("span");
+        label.className = "bookmark-reminder-label";
+        label.textContent = reminderLabel;
+        const clearButton = document.createElement("button");
+        clearButton.className = "ghost clear-bookmark-reminder";
+        clearButton.type = "button";
+        clearButton.textContent = "X";
+        clearButton.title = "Fälligkeit entfernen";
+        clearButton.setAttribute("aria-label", "Fälligkeit entfernen");
+        clearButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onClearBookmarkReminder(bookmark, clearButton);
+        });
+        reminderNode.replaceChildren(label, clearButton);
         reminderNode.classList.remove("hidden");
         reminderNode.classList.toggle("is-due", due);
         item.classList.toggle("is-reminder-alert", due);
       } else {
         reminderNode.classList.add("hidden");
         reminderNode.classList.remove("is-due");
-        reminderNode.textContent = "";
+        reminderNode.replaceChildren();
         item.classList.remove("is-reminder-alert");
       }
 
@@ -2066,6 +2082,17 @@ async function saveBookmark(bookmark, patch, withHint = true) {
     setStatus("Lesezeichen aktualisiert.");
   }
   await loadState();
+}
+
+async function onClearBookmarkReminder(bookmark, button) {
+  button.disabled = true;
+  try {
+    await saveBookmark(bookmark, { remind_at: "" }, false);
+    setStatus("Fälligkeit entfernt.");
+  } catch (error) {
+    button.disabled = false;
+    setStatus(error.message, true);
+  }
 }
 
 async function onDeleteBookmark(bookmark) {

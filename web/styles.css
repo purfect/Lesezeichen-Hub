@@ -1019,9 +1019,23 @@ button.danger:hover {
 
 .bookmark-reminder {
   margin: 6px 0 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 0.78rem;
   color: #8ed0bd;
   font-weight: 600;
+}
+
+.clear-bookmark-reminder {
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0.68rem;
+  line-height: 1;
 }
 
 .bookmark-reminder.is-due {
