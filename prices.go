@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -349,92 +350,43 @@ func fetchSilverPrices(ctx context.Context) (silverPricesPayload, error) {
 }
 
 func parseSilverProductsFromHTML(htmlSource, source string) ([]silverProduct, error) {
-	htmlSource = strings.ReplaceAll(htmlSource, "\n", " ")
-	htmlSource = strings.ReplaceAll(htmlSource, "\r", " ")
-
 	products := make([]silverProduct, 0)
 	seen := make(map[string]struct{})
-
-	productBlocksRe := regexp.MustCompile(`(?is)<product-item[^>]*>(.*?)</product-item>`)
-	blocks := productBlocksRe.FindAllStringSubmatch(htmlSource, -1)
-	if len(blocks) > 0 {
-		for _, block := range blocks {
-			blockHTML := block[1]
-			anchorRe := regexp.MustCompile(`(?is)<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>`)
-			anchorMatches := anchorRe.FindAllStringSubmatchIndex(blockHTML, -1)
-			if len(anchorMatches) == 0 {
+	blocks := regexp.MustCompile(`(?is)<product-item\b[^>]*>(.*?)</product-item>`).FindAllStringSubmatch(htmlSource, -1)
+	anchors := regexp.MustCompile(`(?is)<a\b[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>`)
+	names := regexp.MustCompile(`(?is)<span\b[^>]*class=["'][^"']*\bproduct-item__name\b[^"']*["'][^>]*>(.*?)</span>`)
+	prices := regexp.MustCompile(`(?is)<span\b[^>]*class=["'][^"']*\bjs-product-item__default-price\b[^"']*["'][^>]*>(.*?)</span>`)
+	for _, block := range blocks {
+		var name, productURL string
+		for _, anchor := range anchors.FindAllStringSubmatch(block[1], -1) {
+			match := names.FindStringSubmatch(anchor[2])
+			if len(match) == 0 {
 				continue
 			}
-
-			var name string
-			var href string
-			for _, match := range anchorMatches {
-				candidateHref := blockHTML[match[2]:match[3]]
-				candidateContent := blockHTML[match[4]:match[5]]
-				candidateName := sanitizeHTMLText(candidateContent)
-				if candidateName == "" {
-					continue
-				}
-				name = candidateName
-				href = candidateHref
-				break
-			}
-			if name == "" || href == "" {
-				continue
-			}
-
-			priceText, price, ok := findNearbyPrice(blockHTML, 0, len(blockHTML))
-			if !ok || price <= 0 {
-				continue
-			}
-
-			key := strings.ToLower(name)
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			seen[key] = struct{}{}
-
-			products = append(products, silverProduct{
-				Name:      cleanProductName(name),
-				Category:  "Silber 1oz",
-				Price:     price,
-				PriceText: priceText,
-				URL:       normalizeProductURL(href),
-			})
+			name = cleanProductName(sanitizeHTMLText(match[1]))
+			productURL = normalizeProductURL(anchor[1], source)
+			break
 		}
-	}
-
-	if len(products) == 0 {
-		anchorRe := regexp.MustCompile(`(?is)<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>`)
-		anchorMatches := anchorRe.FindAllStringSubmatchIndex(htmlSource, -1)
-		if len(anchorMatches) == 0 {
-			return nil, fmt.Errorf("keine produkt-links gefunden in %s", source)
+		if name == "" || productURL == "" || !looksLike1ozSilverProduct(name) {
+			continue
 		}
-		for _, match := range anchorMatches {
-			anchorHTML := htmlSource[match[0]:match[1]]
-			href := htmlSource[match[2]:match[3]]
-			content := htmlSource[match[4]:match[5]]
-			name := sanitizeHTMLText(content)
-			if name == "" || !looksLike1ozSilverProduct(name, href, anchorHTML) {
-				continue
-			}
-			priceText, price, ok := findNearbyPrice(htmlSource, match[0], match[1])
-			if !ok || price <= 0 {
-				continue
-			}
-			key := strings.ToLower(name)
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			seen[key] = struct{}{}
-			products = append(products, silverProduct{
-				Name:      cleanProductName(name),
-				Category:  "Silber 1oz",
-				Price:     price,
-				PriceText: priceText,
-				URL:       normalizeProductURL(href),
-			})
+		priceMatch := prices.FindStringSubmatch(block[1])
+		if len(priceMatch) == 0 {
+			continue
 		}
+		priceText := sanitizeHTMLText(priceMatch[1])
+		price, err := parsePriceString(priceText)
+		if err != nil || price <= 0 {
+			continue
+		}
+		if _, exists := seen[productURL]; exists {
+			continue
+		}
+		seen[productURL] = struct{}{}
+		products = append(products, silverProduct{
+			Name: name, Category: "Silber 1oz", Price: price,
+			PriceText: priceText, URL: productURL,
+		})
 	}
 
 	if len(products) == 0 {
@@ -444,55 +396,15 @@ func parseSilverProductsFromHTML(htmlSource, source string) ([]silverProduct, er
 	return products, nil
 }
 
-func looksLike1ozSilverProduct(name, href, anchorHTML string) bool {
-	text := strings.ToLower(strings.TrimSpace(name + " " + href + " " + anchorHTML))
-	if strings.Contains(text, "/anlegen/silber") || strings.Contains(text, "?fine_weight") || strings.Contains(text, "sort=") || strings.Contains(text, "price%5b") || strings.Contains(text, "/anlegen/silber/") {
+func looksLike1ozSilverProduct(name string) bool {
+	name = strings.ToLower(name)
+	// The shop lists JUNK-Silbermünze cards whose detail pages return 404.
+	if strings.HasPrefix(name, "junk-silbermünze") || strings.HasPrefix(name, "junk-silbermuenze") {
 		return false
 	}
-	if strings.Contains(text, "silbermünze") || strings.Contains(text, "silbermuenze") {
-		return true
-	}
-	if strings.Contains(text, "silber") && strings.Contains(text, "1") && strings.Contains(text, "oz") {
-		return true
-	}
-	if strings.Contains(text, "1 oz") || strings.Contains(text, "1oz") || strings.Contains(text, "31,1") || strings.Contains(text, "31,1g") || strings.Contains(text, "31,1 g") {
-		return true
-	}
-	return false
-}
-
-func findNearbyPrice(htmlSource string, anchorStart, anchorEnd int) (string, float64, bool) {
-	start := anchorStart
-	if start < 0 {
-		start = 0
-	}
-	end := anchorEnd + 20000
-	if end > len(htmlSource) {
-		end = len(htmlSource)
-	}
-	context := htmlSource[start:end]
-
-	pricePatterns := []string{
-		`(?is)<span[^>]*itemprop=["']price["'][^>]*content=["']([0-9.]+)["'][^>]*>`,
-		`(?is)<span[^>]*content=["']([0-9.]+)["'][^>]*itemprop=["']price["'][^>]*>`,
-		`(?is)<span[^>]*class=["'][^"']*money-price__amount[^"']*["'][^>]*>([^<]+)</span>`,
-		`(?is)<span[^>]*itemprop=["']price["'][^>]*class=["'][^"']*money-price__amount[^"']*["'][^>]*>([^<]+)</span>`,
-		`(?is)([0-9]{1,3}(?:[\.,][0-9]{3})*(?:[\.,][0-9]{2})?)\s*€`,
-	}
-
-	for _, pattern := range pricePatterns {
-		priceRe := regexp.MustCompile(pattern)
-		match := priceRe.FindStringSubmatch(context)
-		if len(match) < 2 {
-			continue
-		}
-		price, err := parsePriceString(match[1])
-		if err == nil && price > 0 {
-			return strings.TrimSpace(match[1]), price, true
-		}
-	}
-
-	return "", 0, false
+	return strings.Contains(name, "silber") &&
+		regexp.MustCompile(`\b(?:1\s*oz|31[,.]1\s*g)\b`).MatchString(name) &&
+		!regexp.MustCompile(`\b\d+\s*(?:x|×)\s*1\s*oz\b`).MatchString(name)
 }
 
 func cleanProductName(name string) string {
@@ -522,18 +434,22 @@ func parsePriceString(raw string) (float64, error) {
 	return value, nil
 }
 
-func normalizeProductURL(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+func normalizeProductURL(raw, source string) string {
+	base, err := url.Parse(source)
+	if err != nil {
 		return ""
 	}
-	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
-		return raw
+	link, err := url.Parse(html.UnescapeString(strings.TrimSpace(raw)))
+	if err != nil || link.Path == "" {
+		return ""
 	}
-	if strings.HasPrefix(raw, "/") {
-		return "https://www.edelmetall-handel.de" + raw
+	resolved := base.ResolveReference(link)
+	if resolved.Host != base.Host || (resolved.Scheme != "https" && resolved.Scheme != "http") ||
+		strings.HasPrefix(resolved.Path, "/anlegen") {
+		return ""
 	}
-	return "https://www.edelmetall-handel.de/" + raw
+	resolved.Fragment = ""
+	return resolved.String()
 }
 
 func sanitizeHTMLText(raw string) string {
